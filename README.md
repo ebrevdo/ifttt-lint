@@ -1,0 +1,101 @@
+# IfThisThenThat Linter (ifttt-lint)
+
+An open‑source implementation of Google's internal IfThisThenThat (IFTTT) linter tool. Enforce atomic pull requests by declaring file dependencies in your code: _If this file changes, then that file or region must also change._
+
+![License](https://img.shields.io/badge/license-MPL%202.0-blue.svg)
+
+## Features
+- Declare **conditional change directives** with optional labels (e.g., `// LINT.IfChange`, `// LINT.IfChange('g')`, or `// LINT.IfChange("g")`).
+- Support for **labeled regions** (`// LINT.Label('name') ... // LINT.EndLabel`) to constrain where changes must occur.
+- True parallel parsing and linting across CPU cores using Node.js worker threads.
+- CLI and **programmatic API** for integration in custom workflows.
+
+## Installation
+Install via npm (when published):
+```bash
+npm install -g ifttt-lint
+```
+Or add to your project as a dev dependency:
+```bash
+npm install --save-dev ifttt-lint
+```
+
+## CLI Usage
+Lint a unified diff from a file or stdin. With `--verbose`, you’ll see per-file processing logs and the parallelism setting:
+
+Options:
+- `-h`, `--help`     Show help and exit
+- `-w`, `--warn`     Warn on lint errors but exit with code 0
+- `-v`, `--verbose`  Show verbose logs (parallelism, files processed)
+
+```bash
+# From a patch file:
+$ ifttt-lint path/to/changes.diff
+
+# From stdin:
+$ git diff HEAD~1 | ifttt-lint -
+```
+The CLI prints debug info to stderr and exits with:
+- `0` if no lint errors
+- `1` if any conditional lint failures
+- `2` on fatal errors (e.g., missing input)
+
+### Example (verbose)
+```bash
+$ cat sample.diff | ifttt-lint --verbose -
+Parallelism: 8
+Processing changed file: src/foo.ts
+Finished processing changed file: src/foo.ts
+Processing target file: src/bar.ts
+Finished processing target file: src/bar.ts
+[ifttt] src/foo.ts#feature:10 -> ThenChange 'src/bar.ts' (line 12): target file 'src/bar.ts' not changed.
+```
+
+## Programmatic API
+Use the `runLint` function in your Node.js scripts:
+```ts
+import { runLint } from 'ifttt-lint';
+import fs from 'fs/promises';
+
+(async () => {
+  const diff = await fs.readFile('changes.diff', 'utf8');
+  const code = await runLint({ diffText: diff }, 4);
+  process.exit(code);
+})();
+```
+
+## Developer Guide
+Clone, install dependencies, and build (requires Node.js >=12 for worker_threads):
+```bash
+$ git clone https://github.com/your-org/ifttt-lint.git
+$ cd ifttt-lint
+$ npm install
+$ npm run build
+```
+Run tests:
+```bash
+$ npm test
+```
+Run performance benchmark:
+```bash
+$ npm run perf
+```
+Start linting locally:
+```bash
+$ npm run start -- path/to/changes.diff
+```
+
+The project structure:
+- `src/` - TypeScript source modules
+- `dist/` - Compiled JavaScript output
+- `tests/` - Jest unit tests
+
+## Contributing
+1. Fork the repo
+2. Create a branch (`git checkout -b feature/xyz`)
+3. Write code & tests
+4. Ensure all tests pass (`npm test`)
+5. Submit a Pull Request
+
+---
+_Licensed under the Mozilla Public License, v. 2.0. See LICENSE for details._
