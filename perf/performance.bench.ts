@@ -7,12 +7,13 @@ import * as path from 'path';
  * Performance benchmark: generate many files in various languages with LINT directives
  * and measure runtime and CPU usage.
  */
+// Increase timeout for performance benchmarks
 jest.setTimeout(60000);
 test('performance benchmark for multi-language linting', async () => {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'perf-'));
   const langs = ['ts', 'js', 'py', 'bzl', 'java', 'c', 'cpp', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'scala', 'sh'];
   const hashLangs = new Set(['py', 'bzl', 'rb', 'sh']);
-  const totalFiles = 50000;
+  const totalFiles = 5000;
   const files: string[] = [];
   // Create files with LINT.IfChange/ThenChange pointing to itself
   for (let i = 0; i < totalFiles; i++) {

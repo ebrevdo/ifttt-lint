@@ -10,6 +10,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   (console.error as jest.Mock).mockRestore();
+});
+afterAll(() => {
   (console.log as jest.Mock).mockRestore();
 });
 

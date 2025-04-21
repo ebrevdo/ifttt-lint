@@ -66,7 +66,7 @@ export async function parseFileDirectives(
     for (let i = 0; i < lines.length; i++) {
       const text = lines[i];
       const lineNum = startLine + i;
-      extractDirectives(text, lineNum, directives);
+      extractDirectives(text, lineNum, directives, filePath);
     }
   }
   return directives;
@@ -78,25 +78,69 @@ export async function parseFileDirectives(
 function extractDirectives(
   text: string,
   lineNum: number,
-  out: LintDirective[]
+  out: LintDirective[],
+  filePath: string
 ) {
   let m: RegExpExecArray | null;
+  let matched = false;
   // IfChange with optional label
   if ((m = ifChangeWithLabelRegex.exec(text))) {
+    matched = true;
     out.push({ kind: 'IfChange', line: lineNum, label: m[1] } as IfChangeDirective);
   } else if (ifChangeRegex.test(text)) {
+    matched = true;
     out.push({ kind: 'IfChange', line: lineNum } as IfChangeDirective);
   }
-  // ThenChange
+  // ThenChange (strict match)
   if ((m = thenChangeRegex.exec(text))) {
+    matched = true;
     out.push({ kind: 'ThenChange', line: lineNum, target: m[1] } as ThenChangeDirective);
+  }
+  // Fallback: any LINT.ThenChange(...) with malformed quotes
+  else if (/^\s*LINT\.ThenChange\(/.test(text)) {
+    // Capture inside parentheses
+    const mm = /LINT\.ThenChange\(([^)]*)\)/.exec(text);
+    if (mm) {
+      matched = true;
+      // Strip surrounding quotes if present
+      let raw = mm[1].trim();
+      raw = raw.replace(/^['"]|['"]$/g, '');
+      out.push({ kind: 'ThenChange', line: lineNum, target: raw } as ThenChangeDirective);
+    }
   }
   // Label
   if ((m = labelRegex.exec(text))) {
+    matched = true;
     out.push({ kind: 'Label', line: lineNum, name: m[1] } as LabelDirective);
   }
   // EndLabel
   if (endLabelRegex.test(text)) {
+    matched = true;
     out.push({ kind: 'EndLabel', line: lineNum } as EndLabelDirective);
+  }
+  // Handle malformed or unknown LINT.* directives
+  if (!matched && /^\s*LINT\./.test(text)) {
+    const trimmed = text.trim();
+    if (/^\s*LINT\.ThenChange/.test(text)) {
+      throw new Error(
+        `Malformed LINT.ThenChange directive at ${filePath}:${lineNum}: expected LINT.ThenChange("target"), saw '${trimmed}'`
+      );
+    }
+    if (/^\s*LINT\.IfChange/.test(text)) {
+      throw new Error(
+        `Malformed LINT.IfChange directive at ${filePath}:${lineNum}: expected LINT.IfChange or LINT.IfChange("label"), saw '${trimmed}'`
+      );
+    }
+    if (/^\s*LINT\.Label/.test(text)) {
+      throw new Error(
+        `Malformed LINT.Label directive at ${filePath}:${lineNum}: expected LINT.Label("name"), saw '${trimmed}'`
+      );
+    }
+    // Unrecognized directive
+    const m2 = /^\s*LINT\.([A-Za-z0-9_]+)/.exec(text);
+    const name = m2 ? m2[1] : 'LINT';
+    throw new Error(
+      `Unknown LINT directive '${name}' at ${filePath}:${lineNum}: '${text.trim()}'`
+    );
   }
 }

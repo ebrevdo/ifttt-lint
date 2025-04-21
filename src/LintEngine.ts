@@ -1,7 +1,9 @@
 // file: src/LintEngine.ts
 import * as os from 'os';
 import { parseChangedLines, LineRange } from './DiffParser';
+// import { parseFileDirectives } from './DirectiveParser'; // no longer needed, directives cached via parserWorker
 import * as path from 'path';
+import * as fsPromises from 'fs/promises';
 import Piscina from 'piscina';
 import { verboseLog } from './logger';
 import { LintDirective, ThenChangeDirective, IfChangeDirective } from './LintPrimitives';
@@ -41,38 +43,162 @@ function isCodeFile(file: string): boolean {
 export async function lintDiff(
   diffText: string,
   concurrency: number = os.cpus().length,
-  verbose: boolean = false
+  verbose: boolean = false,
+  ignoreList: string[] = []
 ): Promise<number> {
+  // Glob matcher: convert simple * and ? patterns into regex
+  function matchGlob(pattern: string, text: string): boolean {
+    // Escape regex metacharacters in pattern, then translate '*' -> '.*' and '?' -> '.'
+    const escapeRegex = (c: string) => c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    let re = '';
+    for (const ch of pattern) {
+      if (ch === '*') {
+        re += '.*';
+      } else if (ch === '?') {
+        re += '.';
+      } else {
+        re += escapeRegex(ch);
+      }
+    }
+    const rx = new RegExp('^' + re + '$');
+    return rx.test(text);
+  }
+  // Prepare ignore patterns: entries like "file.ts", "*.json", or "file.ts#label"
+  type IgnorePattern = { targetName: string; label?: string };
+  const ignorePatterns: IgnorePattern[] = ignoreList.map(item => {
+    const parts = item.split('#');
+    return { targetName: parts[0], label: parts[1] };
+  });
+  const shouldIgnore = (target: string): boolean => {
+    const [targetName, targetLabel] = target.split('#');
+    return ignorePatterns.some(p =>
+      matchGlob(p.targetName, targetName) &&
+      (!p.label || p.label === targetLabel)
+    );
+  };
   const changesMap = parseChangedLines(diffText);
-  // Only process lint directives in code files
-  const changedFiles = Array.from(changesMap.keys()).filter(isCodeFile);
+  // Only process lint directives in code files, excluding ignored files
+  const allChanged = Array.from(changesMap.keys()).filter(isCodeFile);
+  const changedFiles = allChanged.filter(file => {
+    // Ignore file-level patterns (no label), support glob on full path or basename
+    const base = path.basename(file);
+    const skip = ignorePatterns.some(p =>
+      !p.label && (
+        matchGlob(p.targetName, base) || matchGlob(p.targetName, file)
+      )
+    );
+    if (skip && verbose) {
+      verboseLog(`Skipping lint for ignored file: ${file}`);
+    }
+    return !skip;
+  });
   const pairs: PairDirective[] = [];
   let errors = 0;
 
-  // Step 1: Parse directives and build pairs using worker threads
-  // Initialize a Piscina worker pool for parsing directives in parallel
+  // Step 1: Parse directives, enforce pairing of IfChange/ThenChange
   const workerScript = path.resolve(__dirname, '../dist/parserWorker.js');
   const pool = new Piscina({ filename: workerScript, maxThreads: concurrency });
+  const orphanThen: Array<{ file: string; then: ThenChangeDirective }> = [];
+  const orphanIf: Array<{ file: string; line: number; label?: string }> = [];
+  // Cache parse promises for file directives (changed and target files)
+  const directivesCache = new Map<string, Promise<LintDirective[]>>();
   await Promise.all(changedFiles.map(async file => {
     if (verbose) verboseLog(`Processing changed file: ${file}`);
-    const directives = (await pool.runTask(file)) as LintDirective[];
-    const pendingIf: Array<{ line: number; label?: string }> = [];
+    // Kick off parsing and cache promise for this file
+    const parsePromise = pool.runTask(file) as Promise<LintDirective[]>;
+    directivesCache.set(file, parsePromise);
+    const directives = await parsePromise;
+    let currentIf: { line: number; label?: string } | null = null;
+    let sawThen = false;
     for (const d of directives) {
       if (d.kind === 'IfChange') {
         const ic = d as IfChangeDirective;
-        pendingIf.push({ line: ic.line, label: ic.label });
+        currentIf = { line: ic.line, label: ic.label };
+        sawThen = false;
       } else if (d.kind === 'ThenChange') {
-        const pending = pendingIf.shift();
-        if (pending) {
-          const t = d as ThenChangeDirective;
-          pairs.push({ file, ifLine: pending.line, ifLabel: pending.label, thenTarget: t.target, thenLine: d.line });
+        const tc = d as ThenChangeDirective;
+        if (!currentIf) {
+          orphanThen.push({ file, then: tc });
+        } else {
+          pairs.push({ file, ifLine: currentIf.line, ifLabel: currentIf.label, thenTarget: tc.target, thenLine: d.line });
+          sawThen = true;
         }
       }
     }
+    // IfChange without any ThenChange
+    if (currentIf && !sawThen) {
+      orphanIf.push({ file, line: currentIf.line, label: currentIf.label });
+    }
     if (verbose) verboseLog(`Finished processing changed file: ${file}`);
   }));
+  // Report orphan ThenChange directives, unless ignored
+  for (const o of orphanThen) {
+    const target = o.then.target;
+    if (shouldIgnore(target)) {
+      if (verbose) console.log(
+        `[ifttt] Ignoring orphan ThenChange '${target}' in ${o.file}:${o.then.line}`
+      );
+      continue;
+    }
+    console.log(
+      `[ifttt] ${o.file}:${o.then.line} -> unexpected ThenChange '${target}' without preceding IfChange`
+    );
+    errors++;
+  }
+  // Report orphan IfChange directives, unless ignored by file#label patterns
+  for (const o of orphanIf) {
+    // If this IfChange has a label and matches an ignore pattern, skip it
+    if (o.label) {
+      const base = path.basename(o.file);
+      const skipIf = ignorePatterns.some(pat =>
+        matchGlob(pat.targetName, base) && pat.label === o.label
+      );
+      if (skipIf) {
+        if (verbose) verboseLog(
+          `[ifttt] Ignoring orphan IfChange '${o.label}' in ${o.file}:${o.line}`
+        );
+        continue;
+      }
+    }
+    const lbl = o.label ? `('${o.label}')` : '';
+    console.log(
+      `[ifttt] ${o.file}:${o.line} -> missing ThenChange after IfChange${lbl}`
+    );
+    errors++;
+  }
 
-  // Step 2: Parse label ranges for targets
+  // Step 2: Check for orphan ThenChange directives (no preceding IfChange)
+  for (const file of changedFiles) {
+    // Await parsed directives for this file
+    const directivesAll = await directivesCache.get(file)!;
+    // Find ThenChange directives not in any pair
+    for (const d of directivesAll) {
+      if (d.kind === 'ThenChange') {
+        const tc = d as ThenChangeDirective;
+        const target = tc.target;
+        const orphan = !pairs.some(p => p.file === file && p.thenLine === d.line);
+        if (orphan) {
+          if (shouldIgnore(target)) {
+            if (verbose) console.log(
+              `[ifttt] Ignoring orphan ThenChange '${target}' in ${file}:${d.line}`
+            );
+            continue;
+          }
+          // Resolve target file path
+          const [targetName] = target.split('#');
+          const targetFile = path.isAbsolute(targetName)
+            ? targetName
+            : path.join(path.dirname(file), targetName);
+          console.log(
+            `[ifttt] ${file}:${d.line} -> ThenChange '${target}' (line ${d.line}): ` +
+            `target file '${targetFile}' not changed.`
+          );
+          errors++;
+        }
+      }
+    }
+  }
+  // Step 3: Parse label ranges for targets
   const labelRanges = new Map<string, Map<string, LineRange>>();
   // Determine unique target file paths (resolved relative to source file)
   const targetFiles = new Set<string>();
@@ -89,7 +215,47 @@ export async function lintDiff(
   // Step 2: Parse label ranges for targets using the same Piscina pool
   await Promise.all(codeTargetFiles.map(async file => {
     if (verbose) verboseLog(`Processing target file: ${file}`);
-    const directives = (await pool.runTask(file)) as LintDirective[];
+    // Ensure directives parsing promise exists for this file
+    let parsePromise = directivesCache.get(file) as Promise<LintDirective[]> | undefined;
+    if (!parsePromise) {
+      parsePromise = pool.runTask(file) as Promise<LintDirective[]>;
+      directivesCache.set(file, parsePromise);
+    }
+    let directives: LintDirective[];
+    try {
+      directives = await parsePromise;
+    } catch {
+      // Missing target file: report per corresponding ThenChange pragma, unless ignored
+      for (const p of pairs) {
+        const [targetName] = p.thenTarget.split('#');
+        const targetPath = path.isAbsolute(targetName)
+          ? targetName
+          : path.join(path.dirname(p.file), targetName);
+        if (targetPath === file) {
+          const skipTarget = shouldIgnore(p.thenTarget);
+          const skipLabel = p.ifLabel
+            ? ignorePatterns.some(pat =>
+                matchGlob(pat.targetName, path.basename(p.file)) && pat.label === p.ifLabel
+              )
+            : false;
+          if (skipTarget || skipLabel) {
+            if (verbose) verboseLog(
+              `[ifttt] Ignoring ThenChange '${p.thenTarget}' for ${p.file}${p.ifLabel ? `#${p.ifLabel}:${p.ifLine}` : `:${p.ifLine}`}`
+            );
+            continue;
+          }
+          const ifContext = p.ifLabel
+            ? `${p.file}#${p.ifLabel}:${p.ifLine}`
+            : `${p.file}:${p.ifLine}`;
+          console.log(
+            `[ifttt] ${ifContext} -> ThenChange '${p.thenTarget}' (line ${p.thenLine}): ` +
+            `target file '${file}' not found.`
+          );
+          errors++;
+        }
+      }
+      return;
+    }
     const ranges = new Map<string, LineRange>();
     const pending: { name: string; start: number }[] = [];
     directives.forEach(d => {
@@ -109,6 +275,24 @@ export async function lintDiff(
 
   // Step 3: Validate pairs
   for (const p of pairs) {
+    // Skip scenarios matching ignore patterns for labeled IfChange (file#label)
+    if (p.ifLabel) {
+      const fileBase = path.basename(p.file);
+      const skipIf = ignorePatterns.some(pat =>
+        matchGlob(pat.targetName, fileBase) && pat.label === p.ifLabel
+      );
+      if (skipIf) {
+        if (verbose) verboseLog(
+          `[ifttt] Ignoring IfChange '${p.ifLabel}' in ${p.file}:${p.ifLine}`
+        );
+        continue;
+      }
+    }
+    // Skip scenarios matching ignore patterns for ThenChange target (targetName[#label])
+    if (shouldIgnore(p.thenTarget)) {
+      // ignored by user-specified patterns, skip validation
+      continue;
+    }
     const changes = changesMap.get(p.file);
     if (!changes) continue;
 
@@ -128,6 +312,16 @@ export async function lintDiff(
       ? `${p.file}#${p.ifLabel}:${p.ifLine}`
       : `${p.file}:${p.ifLine}`;
     if (!targetChanges) {
+      // If the target file does not exist, skip error (already reported)
+      let exists = true;
+      try {
+        await fsPromises.access(targetFile);
+      } catch {
+        exists = false;
+      }
+      if (!exists) {
+        continue;
+      }
       console.log(
         `[ifttt] ${ifContext} -> ThenChange '${p.thenTarget}' (line ${p.thenLine}): ` +
         `target file '${targetFile}' not changed.`

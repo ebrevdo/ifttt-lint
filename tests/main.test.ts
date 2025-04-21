@@ -46,7 +46,14 @@ describe('runLint', () => {
 describe('parseCliArgs', () => {
   it('defaults with no args', () => {
     const opts = parseCliArgs([]);
-    expect(opts).toEqual({ warnMode: false, showHelp: false, verbose: false, parallelism: -1, diffFile: undefined });
+    expect(opts).toEqual({
+      warnMode: false,
+      showHelp: false,
+      verbose: false,
+      parallelism: -1,
+      ignoreList: [],
+      diffFile: undefined
+    });
   });
   it('parses help flag', () => {
     const opts = parseCliArgs(['--help']);
@@ -83,6 +90,26 @@ describe('parseCliArgs', () => {
   it('parses diffFile as positional', () => {
     const opts = parseCliArgs(['file.diff']);
     expect(opts.diffFile).toBe('file.diff');
+  });
+  it('parses ignore short form', () => {
+    const opts = parseCliArgs(['-i', 'path/to/file']);
+    expect(opts.ignoreList).toEqual(['path/to/file']);
+  });
+  it('parses ignore long form', () => {
+    const opts = parseCliArgs(['--ignore', 'path/to/file#label']);
+    expect(opts.ignoreList).toEqual(['path/to/file#label']);
+  });
+  it('parses ignore with equals', () => {
+    const opts = parseCliArgs(['--ignore=another/file']);
+    expect(opts.ignoreList).toEqual(['another/file']);
+  });
+  it('parses multiple ignore options', () => {
+    const opts = parseCliArgs(['-i', 'a', '--ignore=b', '-i', 'c#lbl']);
+    expect(opts.ignoreList).toEqual(['a', 'b', 'c#lbl']);
+  });
+  it('rejects missing ignore value', () => {
+    const opts = parseCliArgs(['--ignore']);
+    expect(opts.error).toMatch(/Missing value for --ignore/);
   });
 });
 
@@ -132,5 +159,29 @@ describe('CLI invocation', () => {
     expect(lines[0]).toMatch(/^Error: /);
     // there should be stack trace frames matching /^\s+at /
     expect(lines.some((l: string) => /^\s+at /.test(l))).toBe(true);
+  });
+  it('fails on invalid LINT pragma in source file', () => {
+    const { spawnSync } = require('child_process');
+    const fsSync = require('fs');
+    const os = require('os');
+    const path = require('path');
+    // Create a temp file with invalid pragma
+    const tmpFile = path.join(os.tmpdir(), `lint-invalid-${Date.now()}.ts`);
+    fsSync.writeFileSync(tmpFile, '// LINT.IfChange()', 'utf-8');
+    // Craft a diff that references the temp file
+    const diff = [
+      `--- a/${tmpFile}`,
+      `+++ b/${tmpFile}`,
+      '@@ -1 +1 @@',
+      '// LINT.IfChange()',
+    ].join('\n');
+    const script = path.resolve(__dirname, '../dist/main.js');
+    const result = spawnSync(process.execPath, [script, '-v'], {
+      input: diff,
+      encoding: 'utf-8'
+    });
+    expect(result.status).toBe(2);
+    // Error should include file path and line number
+    expect(result.stderr).toMatch(/Malformed LINT.IfChange directive at .*:1/);
   });
 });

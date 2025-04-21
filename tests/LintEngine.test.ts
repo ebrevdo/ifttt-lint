@@ -11,6 +11,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   (console.error as jest.Mock).mockRestore();
+});
+afterAll(() => {
   (console.log as jest.Mock).mockRestore();
 });
 
@@ -267,5 +269,196 @@ describe('lintDiff', () => {
     ].join('\n');
     const result = await lintDiff(diff, 1);
     expect(result).toBe(1);
+  });
+  
+  test('errors on ThenChange without preceding IfChange', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-'));
+    const file1 = path.join(tmpDir, 'file1.ts');
+    const content = ['// LINT.ThenChange("foo.ts")'].join('\n');
+    await fs.writeFile(file1, content, 'utf-8');
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1 +1 @@',
+      '-// LINT.ThenChange("foo.ts")',
+      '+// LINT.ThenChange("foo.ts") // changed'
+    ].join('\n');
+    const logs: string[] = [];
+    jest.spyOn(console, 'log').mockImplementation(msg => logs.push(msg));
+    const code = await lintDiff(diff, 1);
+    expect(code).toBe(1);
+    expect(logs.some(l => l.includes("unexpected ThenChange 'foo.ts' without preceding IfChange"))).toBe(true);
+    (console.log as jest.Mock).mockRestore();
+  });
+
+  test('errors on IfChange without following ThenChange', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-'));
+    const file1 = path.join(tmpDir, 'file1.ts');
+    const content = ['// LINT.IfChange'].join('\n');
+    await fs.writeFile(file1, content, 'utf-8');
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1 +1 @@',
+      '-// LINT.IfChange',
+      '+// LINT.IfChange // changed'
+    ].join('\n');
+    const logs: string[] = [];
+    jest.spyOn(console, 'log').mockImplementation(msg => logs.push(msg));
+    const code = await lintDiff(diff, 1);
+    expect(code).toBe(1);
+    expect(logs.some(l => l.match(/missing ThenChange after IfChange\b/))).toBe(true);
+    (console.log as jest.Mock).mockRestore();
+  });
+  test('ignores orphan ThenChange when matching ignoreList', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-ignore-'));
+    const file1 = path.join(tmpDir, 'file1.ts');
+    const content = ['// LINT.ThenChange("foo.ts")'].join('\n');
+    await fs.writeFile(file1, content, 'utf-8');
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1 +1 @@',
+      '-// LINT.ThenChange("foo.ts")',
+      '+// LINT.ThenChange("foo.ts") // changed'
+    ].join('\n');
+    // Without ignoreList: should error
+    const code1 = await lintDiff(diff, 1, true);
+    expect(code1).toBe(1);
+    // With ignoreList: should ignore error
+    const code2 = await lintDiff(diff, 1, true, ['foo.ts']);
+    expect(code2).toBe(0);
+  });
+  
+  test('ignores orphan IfChange when matching ignoreList for file#label', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-ignore-if-'));
+    const file1 = path.join(tmpDir, 'file1.ts');
+    // Only an IfChange with label, no ThenChange
+    await fs.writeFile(file1, ['// LINT.IfChange("lblonly")'].join('\n'), 'utf-8');
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1 +1 @@',
+      '-// LINT.IfChange("lblonly")',
+      '+// LINT.IfChange("lblonly") // changed'
+    ].join('\n');
+    // Without ignore: should error
+    const code1 = await lintDiff(diff, 1, true);
+    expect(code1).toBe(1);
+    // With ignoreList for file#lblonly: should ignore error
+    const code2 = await lintDiff(diff, 1, true, ['file1.ts#lblonly']);
+    expect(code2).toBe(0);
+  });
+  
+  test('file-level glob ignore skips matching files', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-glob-'));
+    const fileJson = path.join(tmpDir, 'file.json');
+    const target = path.join(tmpDir, 'nochange.ts');
+    // Directive in JSON file: will error without ignore
+    await fs.writeFile(fileJson,
+      ['// LINT.IfChange', '// LINT.ThenChange("nochange.ts")'].join('\n'), 'utf-8'
+    );
+    await fs.writeFile(target, ['// dummy'].join('\n'), 'utf-8');
+    const diff = [
+      `--- a/${fileJson}`,
+      `+++ b/${fileJson}`,
+      '@@ -1,2 +1,2 @@',
+      '-// LINT.IfChange',
+      '+// LINT.IfChange // changed',
+      ' // LINT.ThenChange("nochange.ts")'
+    ].join('\n');
+    // Without ignore: should error because target file not changed
+    const code1 = await lintDiff(diff, 1, true);
+    expect(code1).toBe(1);
+    // With glob ignore '*.json': should skip file.json and error is suppressed
+    const code2 = await lintDiff(diff, 1, true, ['*.json']);
+    expect(code2).toBe(0);
+  });
+  
+  test('ignores specific labeled scenario via file#label', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-label-'));
+    const fileTs = path.join(tmpDir, 'tsconfig.json');
+    const target = path.join(tmpDir, 'noop.ts');
+    // Labeled directive in tsconfig.json
+    await fs.writeFile(fileTs,
+      ['// LINT.IfChange("blah")', '// LINT.ThenChange("noop.ts")'].join('\n'), 'utf-8'
+    );
+    await fs.writeFile(target, ['// dummy'].join('\n'), 'utf-8');
+    const diff = [
+      `--- a/${fileTs}`,
+      `+++ b/${fileTs}`,
+      '@@ -1,2 +1,2 @@',
+      '-// LINT.IfChange("blah")',
+      '+// LINT.IfChange("blah") // changed',
+      ' // LINT.ThenChange("noop.ts")'
+    ].join('\n');
+    // Without ignore: should error because target not changed
+    const code1 = await lintDiff(diff, 1, true);
+    expect(code1).toBe(1);
+    // With ignore pattern tsconfig.json#blah: should skip this labeled scenario
+    const code2 = await lintDiff(diff, 1, true, ['tsconfig.json#blah']);
+    expect(code2).toBe(0);
+  });
+  
+  test('ignores specific ThenChange target label via ignoreList', async () => {
+    // Set up a scenario where the ThenChange target has a label
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-target-label-'));
+    const file1 = path.join(tmpDir, 'file1.ts');
+    const file2 = path.join(tmpDir, 'file2.ts');
+    // file1 has an unlabeled IfChange and a labeled ThenChange on file2#lbl
+    await fs.writeFile(file1, [
+      '// LINT.IfChange',
+      '// LINT.ThenChange("file2.ts#lbl")'
+    ].join('\n'), 'utf-8');
+    // file2 contains the label region
+    await fs.writeFile(file2, [
+      '// LINT.Label("lbl")',
+      'console.log("no change");',
+      '// LINT.EndLabel'
+    ].join('\n'), 'utf-8');
+    // Diff changes only file1 IfChange line
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1,2 +1,2 @@',
+      '-// LINT.IfChange',
+      '+// LINT.IfChange // changed',
+      ' // LINT.ThenChange("file2.ts#lbl")'
+    ].join('\n');
+    // Without ignore: should report missing change in file2#lbl
+    const code1 = await lintDiff(diff, 1, true);
+    expect(code1).toBe(1);
+    // With ignoreList for target label: should ignore that ThenChange
+    const code2 = await lintDiff(diff, 1, true, ['file2.ts#lbl']);
+    expect(code2).toBe(0);
+  });
+  
+  test('ignores missing target file for labeled scenario via file#label', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-missing-label-'));
+    const file1 = path.join(tmpDir, 'fileA.ts');
+    // file1 has an IfChange and a ThenChange with label
+    await fs.writeFile(file1, [
+      '// LINT.IfChange("lblX")',
+      '// LINT.ThenChange("fileB.ts#lblX")'
+    ].join('\n'), 'utf-8');
+    // Do NOT create fileB.ts, so target file is missing
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1,2 +1,2 @@',
+      '-// LINT.IfChange("lblX")',
+      '+// LINT.IfChange("lblX") // changed',
+      ' // LINT.ThenChange("fileB.ts#lblX")'
+    ].join('\n');
+    // Without ignore: should error on missing target file
+    const errors: string[] = [];
+    jest.spyOn(console, 'log').mockImplementation(msg => errors.push(msg));
+    const code1 = await lintDiff(diff, 1, true);
+    expect(code1).toBe(1);
+    expect(errors.some(e => e.includes("missing target file") || e.includes("not found"))).toBe(true);
+    // With ignoreList for fileA.ts#lblX: should ignore missing target error
+    errors.length = 0;
+    const code2 = await lintDiff(diff, 1, true, ['fileA.ts#lblX']);
+    expect(code2).toBe(0);
   });
 });

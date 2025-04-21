@@ -5,6 +5,7 @@ import * as fs from 'fs/promises';
 import { lintDiff } from './LintEngine';
 import { parseChangedLines } from './DiffParser';
 import { verboseLog } from './logger';
+import { Command, InvalidOptionArgumentError } from 'commander';
 
 /**
  * Runs linting on a diff input and returns an exit code.
@@ -23,7 +24,9 @@ import { verboseLog } from './logger';
 export async function runLint(
   diffInput: { filePath?: string; diffText?: string; stdin?: NodeJS.ReadableStream },
   parallelism: number,
-  verbose: boolean = false
+  verbose: boolean = false,
+  /** Optional list of ignore patterns: file paths or file#label */
+  ignoreList: string[] = []
 ): Promise<number> {
   let diffText: string;
   if (diffInput.filePath && diffInput.filePath !== '-') {
@@ -55,10 +58,15 @@ export async function runLint(
   if (verbose) {
     verboseLog(`Parallelism: ${parallelism}`);
   }
-  const code = await lintDiff(diffText, parallelism, verbose);
+  const code = await lintDiff(diffText, parallelism, verbose, ignoreList);
   return code;
 }
 
+/**
+ * Parses CLI arguments for the tool.
+ * @param rawArgs - Array of arguments (excluding node and script path)
+ * @returns Parsed options and any error message.
+ */
 /**
  * Parses CLI arguments for the tool.
  * @param rawArgs - Array of arguments (excluding node and script path)
@@ -69,54 +77,103 @@ export function parseCliArgs(rawArgs: string[]): {
   showHelp: boolean;
   verbose: boolean;
   parallelism: number;
+  /** Optional ignore patterns (repeatable) */
+  ignoreList: string[];
   diffFile?: string;
   error?: string;
 } {
+  // Default values
   let warnMode = false;
   let showHelp = false;
   let verbose = false;
   let parallelism = -1;
-  const positional: string[] = [];
+  const ignoreList: string[] = [];
+  let diffFile: string | undefined;
+
+  // Manual checks for missing values to match legacy behavior
   for (let i = 0; i < rawArgs.length; i++) {
     const arg = rawArgs[i];
-    if (arg === '--warn' || arg === '-w') {
-      warnMode = true;
-    } else if (arg === '--help' || arg === '-h') {
-      showHelp = true;
-    } else if (arg === '--verbose' || arg === '-v') {
-      verbose = true;
-    } else if (arg === '--parallelism' || arg === '-p') {
-      const val = rawArgs[i+1];
-      if (val === undefined) {
-        return { warnMode, showHelp, verbose, parallelism, error: 'Missing value for --parallelism' };
-      }
-      const num = Number(val);
-      if (!Number.isInteger(num) || num < 0) {
-        return { warnMode, showHelp, verbose, parallelism, error: `Invalid parallelism value: ${val}` };
-      }
-      parallelism = num;
-      i++;
-    } else if (arg.startsWith('--parallelism=')) {
-      const val = arg.split('=',2)[1];
-      const num = Number(val);
-      if (!Number.isInteger(num) || num < 0) {
-        return { warnMode, showHelp, verbose, parallelism, error: `Invalid parallelism value: ${val}` };
-      }
-      parallelism = num;
-    } else {
-      positional.push(arg);
+    if ((arg === '--parallelism' || arg === '-p') && rawArgs[i + 1] === undefined) {
+      return { warnMode, showHelp, verbose, parallelism, ignoreList, error: 'Missing value for --parallelism' };
+    }
+    if ((arg === '--ignore' || arg === '-i') && rawArgs[i + 1] === undefined) {
+      return { warnMode, showHelp, verbose, parallelism, ignoreList, error: 'Missing value for --ignore' };
     }
   }
-  if (positional.length > 1) {
-    return { warnMode, showHelp, verbose, parallelism, error: 'Too many arguments' };
+
+  // Use commander to parse arguments
+  const program = new Command();
+  program
+    .helpOption(false)
+    .exitOverride();
+
+  program
+    .option('-w, --warn', 'Warn on lint errors but exit with code 0')
+    .option('-h, --help', 'Show this help message and exit')
+    .option('-v, --verbose', 'Show verbose logging (files being processed)')
+    .option(
+      '-p, --parallelism <number>',
+      'Number of parallel tasks to use (>=0), or -1 to default to CPU cores',
+      (val: string) => {
+        const num = Number(val);
+        if (!Number.isInteger(num) || num < 0) {
+          throw new InvalidOptionArgumentError(`Invalid parallelism value: ${val}`);
+        }
+        return num;
+      },
+      -1
+    )
+    .option(
+      '-i, --ignore <pattern>',
+      'Ignore specified file or file#label during linting (repeatable)',
+      (val: string, prev: string[]) => {
+        prev.push(val);
+        return prev;
+      },
+      [] as string[]
+    )
+    .argument('[diffFile]', "Diff file (or '-' or omitted to read from stdin)");
+
+  let opts;
+  try {
+    program.parse(rawArgs, { from: 'user' });
+    opts = program.opts();
+  } catch (err: unknown) {
+    if (err instanceof InvalidOptionArgumentError) {
+      return { warnMode, showHelp, verbose, parallelism, ignoreList, error: err.message };
+    }
+    if (err instanceof Error) {
+      return { warnMode, showHelp, verbose, parallelism, ignoreList, error: err.message };
+    }
+    return { warnMode, showHelp, verbose, parallelism, ignoreList, error: String(err) };
   }
-  return { warnMode, showHelp, verbose, parallelism, diffFile: positional[0] };
+
+  // Handle too many positional arguments
+  if (program.args.length > 1) {
+    return { warnMode, showHelp, verbose, parallelism, ignoreList, error: 'Too many arguments' };
+  }
+
+  // Check for too many positional arguments
+  const args = program.args;
+  if (args.length > 1) {
+    return { warnMode, showHelp, verbose, parallelism, ignoreList, error: 'Too many arguments' };
+  }
+  // Extract parsed values
+  warnMode = !!opts.warn;
+  showHelp = !!opts.help;
+  verbose = !!opts.verbose;
+  parallelism = opts.parallelism;
+  ignoreList.push(...opts.ignore);
+  diffFile = args[0];
+
+  return { warnMode, showHelp, verbose, parallelism, ignoreList, diffFile };
 }
 // Execute when run as a CLI script
 if (require.main === module) {
   // Parse CLI arguments
   const rawArgs = process.argv.slice(2);
-  const { warnMode, showHelp, verbose, parallelism, diffFile, error } = parseCliArgs(rawArgs);
+  // Parse CLI arguments, including optional ignore patterns
+  const { warnMode, showHelp, verbose, parallelism, ignoreList, diffFile, error } = parseCliArgs(rawArgs);
   const usage = [
     'Usage: ifttt-lint [options] [diffFile]',
     '',
@@ -124,6 +181,7 @@ if (require.main === module) {
     '  -h, --help       Show this help message and exit',
     '  -w, --warn       Warn on lint errors but exit with code 0',
     '  -v, --verbose    Show verbose logging (files being processed)',
+    '  -i, --ignore     Ignore specified file or file#label during linting (repeatable)',
     '',
     "If diffFile is '-' or omitted, input is read from stdin"
   ].join('\n');
@@ -138,10 +196,12 @@ if (require.main === module) {
   }
   // Determine default parallelism (number of CPU cores)
   const defaultParallelism = os.cpus().length;
+  // Execute lint, passing through ignore patterns
   runLint(
     { filePath: diffFile, stdin: process.stdin },
     parallelism >= 0 ? parallelism : defaultParallelism,
-    verbose
+    verbose,
+    ignoreList
   )
     .then(code => {
       if (warnMode && code === 1) {
