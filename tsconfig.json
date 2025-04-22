@@ -15,5 +15,3 @@
   },
   "include": ["src/**/*"]
 }
-// LINT.IfChange("blah")
-// LINT.ThenChange("ick#meh")
