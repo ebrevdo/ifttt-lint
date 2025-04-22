@@ -10,10 +10,60 @@ file or region must also change._
 ## Features
 - Declare **conditional change directives** with optional labels (e.g., `// LINT.IfChange`, `//
   LINT.IfChange('g')`, or `// LINT.IfChange("g")`).
+- Specify **target files** or regions with `// LINT.ThenChange` pragmas (e.g., `// LINT.ThenChange(
+  ['path/to/file1', 'path/to/file2#label'])` or `// LINT.ThenChange('path/to/file1')`).
 - Support for **labeled regions** (`// LINT.Label('name') ... // LINT.EndLabel`) to constrain where
   changes must occur.
 - True parallel parsing and linting across CPU cores using Node.js worker threads.
 - CLI and **programmatic API** for integration in custom workflows.
+
+## Example files
+
+### Base file and targets
+
+```bash
+# path/to/Makefile
+# important config bit
+# LINT.IfChange
+SOMEVAR = 1
+# LINT.ThenChange(
+#  ['path/to/py_config.py',
+#   'path/to/ts_config.ts#foo'],
+# )
+```
+
+```python
+# path/to/py_config.py
+SOMEVAR = 1
+```
+
+```typescript
+// path/to/ts_config.ts
+// LINT.Label('foo')
+const SOMEVAR = 1;
+// LINT.EndLabel
+```
+
+### Cross-referencing files
+```python
+# path/to/file1.py
+# LINT.IfChange('foo')
+class Blah(Enum):
+    FOO = 1
+    BAR = 2
+# LINT.ThenChange('path/to/file2.json#bar')
+```
+
+```json
+/* path/to/file2.json */
+
+// LINT.IfChange('bar')
+{
+  "foo": 1,
+  "bar": 2
+}
+// LINT.ThenChange('path/to/file1.py#foo')
+```
 
 ## Installation
 Install via npm (when published):
@@ -109,7 +159,7 @@ jobs:
           MERGE_BASE=$(git merge-base HEAD $BASE_SHA)
           git diff $MERGE_BASE HEAD > changes.diff
       - name: Run IFTTT Lint
-        run: npx ifttt-lint changes.diff
+        run: npx ifttt-lint -i '**/*.md' changes.diff
 ```
 
 This workflow computes the diff from the common ancestor between the PR branch (`HEAD`) and the base branch, saves it to `changes.diff`, and runs `ifttt-lint` against that diff.

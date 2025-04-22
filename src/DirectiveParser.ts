@@ -1,7 +1,6 @@
 // file: src/DirectiveParser.ts
 import * as fs from 'fs/promises';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: no type definitions for multilang-extract-comments
+// @ts-expect-error: no type definitions for multilang-extract-comments
 import extractComments from 'multilang-extract-comments';
 import * as path from 'path';
 import {
@@ -51,12 +50,49 @@ export async function parseFileDirectives(
   const directives: LintDirective[] = [];
   for (const [beginStr, comment] of Object.entries(commentsMap)) {
     const startLine = Number(beginStr);
-    // comment.content is the inner text of the comment, possibly multi-line
     const lines = (comment.content ?? '').split(/\r?\n/);
-    for (let i = 0; i < lines.length; i++) {
+    let i = 0;
+    while (i < lines.length) {
       const text = lines[i];
       const lineNum = startLine + i;
+      // Handle ThenChange directives, including multi-line array literals
+      if (/^\s*LINT\.ThenChange\b/.test(text)) {
+        // Collect directive lines until closing parenthesis
+        let j = i;
+        const directiveLines = [text];
+        let hasClosing = text.includes(')');
+        while (j + 1 < lines.length && !hasClosing) {
+          j++;
+          directiveLines.push(lines[j]);
+          if (lines[j].includes(')')) {
+            hasClosing = true;
+          }
+        }
+        const directiveContent = directiveLines.join(' ');
+        // Try parsing array literal: LINT.ThenChange([...])
+        const arrayMatch = /\(\s*\[([^\]]*?)\]\s*,?\s*\)/.exec(directiveContent);
+        if (arrayMatch) {
+          const items = arrayMatch[1]
+            .split(',')
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+          for (const item of items) {
+            const tgt = item.replace(/^['"]|['"]$/g, '');
+            directives.push({ kind: 'ThenChange', line: lineNum, target: tgt } as ThenChangeDirective);
+          }
+        } else {
+          // Fallback to single target literal: LINT.ThenChange('target')
+          const singleMatch = /LINT\.ThenChange\s*\(\s*['"]([^'"]+)['"]\s*\)/.exec(directiveContent);
+          if (singleMatch) {
+            directives.push({ kind: 'ThenChange', line: lineNum, target: singleMatch[1] } as ThenChangeDirective);
+          }
+        }
+        i = j + 1;
+        continue;
+      }
+      // Default: parse any other directives (IfChange, Label, etc.)
       extractDirectives(text, lineNum, directives, filePath);
+      i++;
     }
   }
   return directives;
@@ -81,18 +117,26 @@ function extractDirectives(
     matched = true;
     out.push({ kind: 'IfChange', line: lineNum } as IfChangeDirective);
   }
-  // ThenChange (strict match)
-  if ((m = thenChangeRegex.exec(text))) {
+  // ThenChange with list of targets, e.g., LINT.ThenChange(['f1', 'f2#label'])
+  let lm: RegExpExecArray | null;
+  if ((lm = /^\s*LINT\.ThenChange\s*\(\s*\[([^\]]*)\]\s*\)/.exec(text))) {
+    matched = true;
+    const items = lm[1].split(',').map(s => s.trim()).filter(s => s.length > 0);
+    for (const item of items) {
+      const tgt = item.replace(/^['"]|['"]$/g, '');
+      out.push({ kind: 'ThenChange', line: lineNum, target: tgt } as ThenChangeDirective);
+    }
+  }
+  // ThenChange (strict match single target)
+  else if ((m = thenChangeRegex.exec(text))) {
     matched = true;
     out.push({ kind: 'ThenChange', line: lineNum, target: m[1] } as ThenChangeDirective);
   }
-  // Fallback: any LINT.ThenChange(...) with malformed quotes
+  // Fallback: any LINT.ThenChange(...) with malformed quotes or other forms
   else if (/^\s*LINT\.ThenChange\(/.test(text)) {
-    // Capture inside parentheses
     const mm = /LINT\.ThenChange\(([^)]*)\)/.exec(text);
     if (mm) {
       matched = true;
-      // Strip surrounding quotes if present
       let raw = mm[1].trim();
       raw = raw.replace(/^['"]|['"]$/g, '');
       out.push({ kind: 'ThenChange', line: lineNum, target: raw } as ThenChangeDirective);

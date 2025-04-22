@@ -28,4 +28,4 @@ jobs:
       - name: Run IFTT scan
         run: node ./dist/main.js -s .
       - name: Run IFTTT lint (ignore typescript files)
-        run: node ./dist/main.js -i '**/*.ts' changes.diff
+        run: node ./dist/main.js -i '**/*.ts' -i '*.md' changes.diff
