@@ -23,22 +23,8 @@ export interface LineRange {
   endLine: number;
 }
 
-/**
- * Parses a unified diff text and returns a map from file paths to their changes.
- *
- * @param diffText - The unified diff text to parse.
- * @returns A Map where each key is a file path and its value contains added and removed lines.
- */
-/**
- * Parses a unified diff text and returns a map from file paths to their changes.
- * Supports diffs with arbitrary src/dst prefixes (not just a/ and b/).
- * @param diffText - The unified diff text to parse.
- * @returns A Map where each key is a file path and its value contains added and removed line numbers.
- */
 // Use external parse-diff library, sanitizing input to avoid header parsing errors
-// Use CommonJS require for parse-diff to avoid TS import issues
- 
-const parseDiff = require('parse-diff');
+import parseDiff from 'parse-diff';
 
 /**
  * Parses a unified diff text and returns a map from file paths to their changes.
@@ -90,4 +76,3 @@ export function parseChangedLines(diffText: string): Map<string, FileChanges> {
   }
   return result;
 }
-

@@ -24,8 +24,8 @@ interface PairDirective {
  * @param concurrency - Maximum number of concurrent parsing tasks.
  * @returns Promise resolving to 0 if no lint errors, or 1 if errors were found.
  */
-// File extensions to ignore when scanning for lint directives
-const IGNORED_EXTENSIONS = new Set<string>(['.md', '.markdown']);
+// File extensions to silently ignore (none)
+const IGNORED_EXTENSIONS = new Set<string>();
 /**
  * Determine whether the given file path should be treated as a code file for lint directives.
  */
@@ -77,22 +77,29 @@ export async function lintDiff(
     );
   };
   const changesMap = parseChangedLines(diffText);
-  // Only process lint directives in code files, excluding ignored files
-  const allChanged = Array.from(changesMap.keys()).filter(isCodeFile);
-  // Exclude ignored files based on user patterns
-  const changedFiles = allChanged.filter(file => {
-    // Ignore file-level patterns (no label), support glob on full path or basename
+  // Determine which changed files to lint, warn or skip
+  const allChangedRaw = Array.from(changesMap.keys());
+  const changedFiles: string[] = [];
+  for (const file of allChangedRaw) {
+    const ext = path.extname(file).toLowerCase();
+    // Silent ignore for explicitly ignored extensions
+    if (IGNORED_EXTENSIONS.has(ext)) {
+      if (verbose) verboseLog(`Skipping ignored file: ${file}`);
+      continue;
+    }
+    // Exclude user-specified patterns
     const base = path.basename(file);
     const skip = ignorePatterns.some(p =>
       !p.label && (
         matchGlob(p.targetName, base) || matchGlob(p.targetName, file)
       )
     );
-    if (skip && verbose) {
-      verboseLog(`Skipping lint for ignored file: ${file}`);
+    if (skip) {
+      if (verbose) verboseLog(`Skipping lint for ignored file: ${file}`);
+      continue;
     }
-    return !skip;
-  });
+    changedFiles.push(file);
+  }
   const pairs: PairDirective[] = [];
   let errors = 0;
 
