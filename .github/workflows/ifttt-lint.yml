@@ -1,0 +1,27 @@
+name: IFTTT Lint
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0      # Fetch full history for merge-base
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "16"  # or your preferred version
+      - name: Install dependencies
+        run: npm ci
+      - name: Compute diff from common ancestor
+        run: |
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          MERGE_BASE=$(git merge-base HEAD $BASE_SHA)
+          git diff $MERGE_BASE HEAD > changes.diff
+      - name: Run IFTTT Lint
+        run: npx ifttt-lint changes.diff
