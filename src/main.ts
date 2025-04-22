@@ -6,6 +6,12 @@ import { lintDiff } from './LintEngine';
 import { parseChangedLines } from './DiffParser';
 import { verboseLog } from './logger';
 import { Command, InvalidOptionArgumentError } from 'commander';
+import { spawn } from 'child_process';
+import { rgPath } from '@vscode/ripgrep';
+import Piscina from 'piscina';
+import * as path from 'path';
+import { validateDirectiveUniqueness } from './DirectiveValidator';
+import { LintDirective } from './LintPrimitives';
 
 /**
  * Runs linting on a diff input and returns an exit code.
@@ -80,6 +86,7 @@ export function parseCliArgs(rawArgs: string[]): {
   /** Optional ignore patterns (repeatable) */
   ignoreList: string[];
   diffFile?: string;
+  scanDir?: string;
   error?: string;
 } {
   // Default values
@@ -89,6 +96,7 @@ export function parseCliArgs(rawArgs: string[]): {
   let parallelism = -1;
   const ignoreList: string[] = [];
   let diffFile: string | undefined;
+  let scanDir: string | undefined;
 
   // Manual checks for missing values to match legacy behavior
   for (let i = 0; i < rawArgs.length; i++) {
@@ -98,6 +106,9 @@ export function parseCliArgs(rawArgs: string[]): {
     }
     if ((arg === '--ignore' || arg === '-i') && rawArgs[i + 1] === undefined) {
       return { warnMode, showHelp, verbose, parallelism, ignoreList, error: 'Missing value for --ignore' };
+    }
+    if ((arg === '--scan' || arg === '-s') && rawArgs[i + 1] === undefined) {
+      return { warnMode, showHelp, verbose, parallelism, ignoreList, error: 'Missing value for --scan' };
     }
   }
 
@@ -132,6 +143,7 @@ export function parseCliArgs(rawArgs: string[]): {
       },
       [] as string[]
     )
+    .option('-s, --scan <dir>', 'Scan given directory for LINT pragmas and perform validation')
     .argument('[diffFile]', "Diff file (or '-' or omitted to read from stdin)");
 
   let opts;
@@ -165,15 +177,71 @@ export function parseCliArgs(rawArgs: string[]): {
   parallelism = opts.parallelism;
   ignoreList.push(...opts.ignore);
   diffFile = args[0];
+  scanDir = opts.scan;
 
-  return { warnMode, showHelp, verbose, parallelism, ignoreList, diffFile };
+  return { warnMode, showHelp, verbose, parallelism, ignoreList, diffFile, scanDir };
+}
+/**
+ * Scans a directory for files containing "LINT." and validates directive formatting.
+ * @param dir Directory path to scan.
+ * @param verbose Whether to enable verbose logging.
+ * @returns Promise resolving to exit code: 0 if no errors, 1 if validation errors found.
+ */
+/**
+ * Scans a directory for files containing "LINT." and validates directive formatting in parallel.
+ * Detects duplicate IfChange labels or Label names within a single file.
+ * @param dir Directory path to scan.
+ * @param parallelism Number of worker threads to use for parsing.
+ * @param verbose Whether to enable verbose logging.
+ * @returns Promise resolving to exit code: 0 if no errors, 1 if validation errors found.
+ */
+export async function runScan(dir: string, parallelism: number, verbose: boolean): Promise<number> {
+  // Use ripgrep to find files containing any "LINT." pragmas
+  // Use ripgrep binary from vscode-ripgrep package
+  const rg = spawn(rgPath, ['--files-with-matches', 'LINT\\.', dir]);
+  let stdout = '';
+  let stderr = '';
+  rg.stdout.on('data', data => { stdout += data.toString(); });
+  rg.stderr.on('data', data => { stderr += data.toString(); });
+  await new Promise<void>((resolve, reject) => {
+    rg.on('error', err => reject(err));
+    rg.on('close', code => {
+      if (code !== 0 && code !== 1) {
+        return reject(new Error(`ripgrep failed with code ${code}: ${stderr}`));
+      }
+      resolve();
+    });
+  });
+  const files = stdout.split('\n').filter(f => f);
+  if (files.length === 0) {
+    if (verbose) verboseLog(`No files containing 'LINT.' found in ${dir}`);
+    return 0;
+  }
+  // Create worker pool for parallel directive parsing
+  const workerScript = path.resolve(__dirname, '../dist/parserWorker.js');
+  const pool = new Piscina({ filename: workerScript, maxThreads: parallelism });
+  let errors = 0;
+  // Dispatch validation tasks in parallel
+  const tasks = files.map(async file => {
+    if (verbose) verboseLog(`Validating file: ${file}`);
+    try {
+      const directives = (await pool.runTask(file)) as LintDirective[];
+      errors += validateDirectiveUniqueness(directives, file, msg => console.error(msg));
+    } catch (err: unknown) {
+      console.error(err instanceof Error ? err.message : err);
+      errors++;
+    }
+  });
+  await Promise.all(tasks);
+  await pool.destroy();
+  return errors > 0 ? 1 : 0;
 }
 // Execute when run as a CLI script
 if (require.main === module) {
   // Parse CLI arguments
   const rawArgs = process.argv.slice(2);
   // Parse CLI arguments, including optional ignore patterns
-  const { warnMode, showHelp, verbose, parallelism, ignoreList, diffFile, error } = parseCliArgs(rawArgs);
+  const { warnMode, showHelp, verbose, parallelism, ignoreList, diffFile, scanDir, error } = parseCliArgs(rawArgs);
   const usage = [
     'Usage: ifttt-lint [options] [diffFile]',
     '',
@@ -182,6 +250,7 @@ if (require.main === module) {
     '  -w, --warn       Warn on lint errors but exit with code 0',
     '  -v, --verbose    Show verbose logging (files being processed)',
     '  -i, --ignore     Ignore specified file or file#label during linting (repeatable)',
+    '  -s, --scan <dir>  Scan given directory for LINT pragmas and perform validation',
     '',
     "If diffFile is '-' or omitted, input is read from stdin"
   ].join('\n');
@@ -194,25 +263,34 @@ if (require.main === module) {
     console.log(usage);
     process.exit(2);
   }
-  // Determine default parallelism (number of CPU cores)
-  const defaultParallelism = os.cpus().length;
-  // Execute lint, passing through ignore patterns
-  runLint(
-    { filePath: diffFile, stdin: process.stdin },
-    parallelism >= 0 ? parallelism : defaultParallelism,
-    verbose,
-    ignoreList
-  )
-    .then(code => {
-      if (warnMode && code === 1) {
-        // In warn mode, do not exit with error
-        process.exit(0);
-      }
-      process.exit(code);
-    })
-    .catch(err => {
-      // On real errors (e.g., filesystem issues), print full stack trace
-      console.error(err.stack || err);
-      process.exit(2);
-    });
+  if (scanDir) {
+    // Determine parallelism for scan mode
+    const scanParallelism = parallelism >= 0 ? parallelism : os.cpus().length;
+    runScan(scanDir, scanParallelism, verbose)
+      .then(code => process.exit(code))
+      .catch(err => {
+        console.error(err.stack || err);
+        process.exit(2);
+      });
+  } else {
+    // Determine default parallelism (number of CPU cores)
+    const defaultParallelism = os.cpus().length;
+    // Execute lint, passing through ignore patterns
+    runLint(
+      { filePath: diffFile, stdin: process.stdin },
+      parallelism >= 0 ? parallelism : defaultParallelism,
+      verbose,
+      ignoreList
+    )
+      .then(code => {
+        if (warnMode && code === 1) {
+          process.exit(0);
+        }
+        process.exit(code);
+      })
+      .catch(err => {
+        console.error(err.stack || err);
+        process.exit(2);
+      });
+  }
 }

@@ -7,6 +7,7 @@ import * as fsPromises from 'fs/promises';
 import Piscina from 'piscina';
 import { verboseLog } from './logger';
 import { LintDirective, ThenChangeDirective, IfChangeDirective } from './LintPrimitives';
+import { validateDirectiveUniqueness } from './DirectiveValidator';
 
 interface PairDirective {
   file: string;
@@ -108,6 +109,8 @@ export async function lintDiff(
     const parsePromise = pool.runTask(file) as Promise<LintDirective[]>;
     directivesCache.set(file, parsePromise);
     const directives = await parsePromise;
+    // Validate duplicate directive labels within this file
+    errors += validateDirectiveUniqueness(directives, file, msg => console.log(msg));
     let currentIf: { line: number; label?: string } | null = null;
     let sawThen = false;
     for (const d of directives) {
@@ -224,6 +227,8 @@ export async function lintDiff(
     let directives: LintDirective[];
     try {
       directives = await parsePromise;
+      // Validate duplicate directive labels within target file
+      errors += validateDirectiveUniqueness(directives, file, msg => console.log(msg));
     } catch {
       // Missing target file: report per corresponding ThenChange pragma, unless ignored
       for (const p of pairs) {

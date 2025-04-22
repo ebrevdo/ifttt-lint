@@ -52,7 +52,8 @@ describe('parseCliArgs', () => {
       verbose: false,
       parallelism: -1,
       ignoreList: [],
-      diffFile: undefined
+      diffFile: undefined,
+      scanDir: undefined
     });
   });
   it('parses help flag', () => {
@@ -183,5 +184,54 @@ describe('CLI invocation', () => {
     expect(result.status).toBe(2);
     // Error should include file path and line number
     expect(result.stderr).toMatch(/Malformed LINT.IfChange directive at .*:1/);
+  });
+  it('errors out on duplicate IfChange labels in diff mode', () => {
+    const { spawnSync } = require('child_process');
+    const fsSync = require('fs');
+    const osMod = require('os');
+    const pathMod = require('path');
+    // Create a temp file with two identical IfChange labels
+    const tmpFile = pathMod.join(osMod.tmpdir(), `dup-if-${Date.now()}.ts`);
+    fsSync.writeFileSync(tmpFile,
+      `// LINT.IfChange("foo")\n// LINT.IfChange("foo")\n`, 'utf-8');
+    const diff = [
+      `--- a/${tmpFile}`,
+      `+++ b/${tmpFile}`,
+      '@@ -1,2 +1,2 @@',
+      '// LINT.IfChange("foo")',
+      '// LINT.IfChange("foo")',
+    ].join('\n');
+    const script = pathMod.resolve(__dirname, '../dist/main.js');
+    const result = spawnSync(process.execPath, [script, '-v'], {
+      input: diff,
+      encoding: 'utf-8'
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toMatch(/duplicate directive label 'foo'/);
+  });
+  it('errors out on Label and IfChange sharing the same name in diff mode', () => {
+    const { spawnSync } = require('child_process');
+    const fsSync = require('fs');
+    const osMod = require('os');
+    const pathMod = require('path');
+    // Create a temp file with a Label and an IfChange using same label
+    const tmpFile = pathMod.join(osMod.tmpdir(), `dup-mix-${Date.now()}.ts`);
+    fsSync.writeFileSync(tmpFile,
+      `// LINT.Label("foo")\n/* LINT.EndLabel */\n// LINT.IfChange("foo")\n`, 'utf-8');
+    const diff = [
+      `--- a/${tmpFile}`,
+      `+++ b/${tmpFile}`,
+      '@@ -1,3 +1,3 @@',
+      '// LINT.Label("foo")',
+      '/* LINT.EndLabel */',
+      '// LINT.IfChange("foo")',
+    ].join('\n');
+    const script = pathMod.resolve(__dirname, '../dist/main.js');
+    const result = spawnSync(process.execPath, [script, '-v'], {
+      input: diff,
+      encoding: 'utf-8'
+    });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toMatch(/duplicate directive label 'foo'/);
   });
 });
