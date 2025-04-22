@@ -22,6 +22,36 @@ describe('parseChangedLines', () => {
     expect(result.size).toBe(0);
   });
 
+  test('rename entries map to new file path', () => {
+    const diff = `
+rename from old.txt
+rename to new.txt
+--- a/old.txt
++++ b/new.txt
+@@ -1,1 +1,1 @@
+-old content
++new content
+`.trim();
+    const map = parseChangedLines(diff);
+    expect(map.has('new.txt')).toBe(true);
+    const changes = map.get('new.txt')!;
+    expect(changes.addedLines.has(1)).toBe(true);
+    expect(changes.removedLines.has(1)).toBe(true);
+    expect(map.has('old.txt')).toBe(false);
+  });
+
+  test('deleted file entries are skipped', () => {
+    const diff = `
+--- a/foo.txt
++++ /dev/null
+@@ -1,1 +0,0 @@
+-deleted line
+`.trim();
+    const map = parseChangedLines(diff);
+    expect(map.has('foo.txt')).toBe(false);
+    expect(map.size).toBe(0);
+  });
+
   test('simple add and delete', () => {
     const diff = `
 --- a/file.txt
@@ -62,7 +92,7 @@ describe('DirectiveParser', () => {
       { kind: 'EndLabel', line: 7 },
     ]);
   });
-  
+
   test('parses double-quoted IfChange label', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-'));
     const filePath = path.join(tmpDir, 'test2.ts');
@@ -84,7 +114,7 @@ describe('DirectiveParser', () => {
       { kind: 'EndLabel', line: 6 },
     ]);
   });
-  
+
   test('parses directives in C-style block comments', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-'));
     const filePath = path.join(tmpDir, 'test.c');
@@ -152,7 +182,7 @@ describe('lintDiff', () => {
     const result = await lintDiff(diff, 1, true);
     expect(result).toBe(1);
   });
-  
+
   test('reports IfChange label in error context', async () => {
     // Setup files
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-'));
@@ -270,7 +300,7 @@ describe('lintDiff', () => {
     const result = await lintDiff(diff, 1);
     expect(result).toBe(1);
   });
-  
+
   test('errors on ThenChange without preceding IfChange', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-'));
     const file1 = path.join(tmpDir, 'file1.ts');
@@ -329,7 +359,7 @@ describe('lintDiff', () => {
     const code2 = await lintDiff(diff, 1, true, ['foo.ts']);
     expect(code2).toBe(0);
   });
-  
+
   test('ignores orphan IfChange when matching ignoreList for file#label', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-ignore-if-'));
     const file1 = path.join(tmpDir, 'file1.ts');
@@ -349,7 +379,7 @@ describe('lintDiff', () => {
     const code2 = await lintDiff(diff, 1, true, ['file1.ts#lblonly']);
     expect(code2).toBe(0);
   });
-  
+
   test('file-level glob ignore skips matching files', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-glob-'));
     const fileJson = path.join(tmpDir, 'file.json');
@@ -374,7 +404,7 @@ describe('lintDiff', () => {
     const code2 = await lintDiff(diff, 1, true, ['*.json']);
     expect(code2).toBe(0);
   });
-  
+
   test('ignores specific labeled scenario via file#label', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-label-'));
     const fileTs = path.join(tmpDir, 'tsconfig.json');
@@ -399,7 +429,7 @@ describe('lintDiff', () => {
     const code2 = await lintDiff(diff, 1, true, ['tsconfig.json#blah']);
     expect(code2).toBe(0);
   });
-  
+
   test('ignores specific ThenChange target label via ignoreList', async () => {
     // Set up a scenario where the ThenChange target has a label
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-target-label-'));
@@ -432,7 +462,7 @@ describe('lintDiff', () => {
     const code2 = await lintDiff(diff, 1, true, ['file2.ts#lbl']);
     expect(code2).toBe(0);
   });
-  
+
   test('ignores missing target file for labeled scenario via file#label', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-missing-label-'));
     const file1 = path.join(tmpDir, 'fileA.ts');

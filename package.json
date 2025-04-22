@@ -1,6 +1,6 @@
 {
   "name": "ifttt-lint",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A high-concurrency Node.js IFTTT linter",
   "main": "dist/main.js",
   "types": "dist",

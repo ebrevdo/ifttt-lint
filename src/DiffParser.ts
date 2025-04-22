@@ -36,7 +36,9 @@ export interface LineRange {
  * @returns A Map where each key is a file path and its value contains added and removed line numbers.
  */
 // Use external parse-diff library, sanitizing input to avoid header parsing errors
-import parseDiff from 'parse-diff';
+// Use CommonJS require for parse-diff to avoid TS import issues
+ 
+const parseDiff = require('parse-diff');
 
 /**
  * Parses a unified diff text and returns a map from file paths to their changes.
@@ -44,26 +46,32 @@ import parseDiff from 'parse-diff';
  * @param diffText - The unified diff text to parse.
  * @returns A Map where each key is a file path and its value contains added and removed line numbers.
  */
+/**
+ * Parses a unified diff text and returns a map from file paths to their changes.
+ * Supports diffs with arbitrary src/dst prefixes (e.g., a/, b/).
+ * @param diffText - The unified diff text to parse.
+ * @returns A Map where each key is a file path and its value contains added and removed line numbers.
+ */
 export function parseChangedLines(diffText: string): Map<string, FileChanges> {
-  // Remove lines starting with 'diff ' to prevent parse-diff from misparsing headers
-  const filteredText = diffText
+  // Remove 'diff ' headers to avoid parse-diff header misparsing
+  const filtered = diffText
     .split(/\r?\n/)
     .filter(line => !line.startsWith('diff '))
     .join('\n');
-  // Delegate to parse-diff
-  const files = parseDiff(filteredText);
+  const files = parseDiff(filtered);
   const result = new Map<string, FileChanges>();
   for (const file of files) {
+    // Skip deleted files (diff to /dev/null)
+    if (file.to === '/dev/null') {
+      continue;
+    }
     // Determine file path: prefer 'to' unless it's '/dev/null', else use 'from'
-    // Determine file path and strip single-character prefixes (e.g., 'a/', 'b/', 'w/', './')
-    const rawPath = file.to && file.to !== '/dev/null' ? file.to : file.from;
-    // If path begins with a single character and '/', drop the prefix
-    const filePath = rawPath.length > 1 && rawPath[1] === '/'
-      ? rawPath.slice(2)
-      : rawPath;
+    const raw = file.to && file.to !== '/dev/null' ? file.to : file.from;
+    // Strip single-character prefix (e.g., 'a/', 'b/')
+    const filePath = raw.length > 1 && raw[1] === '/' ? raw.slice(2) : raw;
     const added = new Set<number>();
     const removed = new Set<number>();
-    // Iterate over chunks and changes
+    // Iterate through hunks
     for (const chunk of file.chunks || []) {
       let oldLine = chunk.oldStart;
       let newLine = chunk.newStart;
