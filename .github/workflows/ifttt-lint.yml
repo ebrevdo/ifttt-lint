@@ -25,5 +25,7 @@ jobs:
         run: npm ci
       - name: Build IFTTT
         run: npm run build
-      - name: Run IFTTT Lint
+      - name: Run IFTT scan
+        run: node ./dist/main.js -s .
+      - name: Run IFTTT lint
         run: node ./dist/main.js changes.diff
