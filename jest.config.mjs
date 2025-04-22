@@ -1,10 +1,12 @@
 /**
- * Jest configuration for TypeScript testing
+ * Jest configuration for tests
+ * @type {import('@jest/types').Config.InitialOptions}
  */
-module.exports = {
+export default {
   // Enable verbose test reporting and ensure console output is visible
   verbose: true,
   silent: false,
+  cache: false,
   // Use ts-jest to transform TypeScript files
   testEnvironment: 'node',
   roots: ['<rootDir>/tests'],

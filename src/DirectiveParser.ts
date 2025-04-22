@@ -21,16 +21,6 @@ const labelRegex = /LINT\.Label\(['"]([^'"]+)['"]\)/;
 const endLabelRegex = /LINT\.EndLabel/;
 
 /**
- * Parses lint directives from the specified file.
- *
- * @param filePath - Path to the file to parse directives from.
- * @returns Array of LintDirective objects found in the file.
- */
-/**
- * Parses lint directives from comments in the specified file.
- * Only comment text (line comments, hash comments, or block comments) is scanned.
- */
-/**
  * Parses lint directives from comments in the specified file.
  * Uses the extract-comments library to find comment blocks and line comments,
  * then scans each comment line for LINT directives.
