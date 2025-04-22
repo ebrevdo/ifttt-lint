@@ -79,6 +79,7 @@ export async function lintDiff(
   const changesMap = parseChangedLines(diffText);
   // Only process lint directives in code files, excluding ignored files
   const allChanged = Array.from(changesMap.keys()).filter(isCodeFile);
+  // Exclude ignored files based on user patterns
   const changedFiles = allChanged.filter(file => {
     // Ignore file-level patterns (no label), support glob on full path or basename
     const base = path.basename(file);
