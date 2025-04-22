@@ -1,7 +1,6 @@
 // file: src/LintEngine.ts
 import * as os from 'os';
 import { parseChangedLines, LineRange } from './DiffParser';
-// import { parseFileDirectives } from './DirectiveParser'; // no longer needed, directives cached via parserWorker
 import * as path from 'path';
 import * as fsPromises from 'fs/promises';
 import Piscina from 'piscina';

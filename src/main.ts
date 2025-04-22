@@ -17,13 +17,6 @@ import { LintDirective } from './LintPrimitives';
  * Runs linting on a diff input and returns an exit code.
  *
  * @param diffInput - Object specifying diff input: filePath to read from, diffText directly, or stdin stream.
- * @param concurrency - Maximum number of concurrent tasks to use.
- * @returns Promise resolving to exit code: 0 if no lint errors, 1 if lint errors found.
- */
-/**
- * Runs linting on a diff input and returns an exit code.
- *
- * @param diffInput - Object specifying diff input: filePath to read from, diffText directly, or stdin stream.
  * @param parallelism - Number of parallel tasks to use (>=1), or -1 to default to CPU cores.
  * @returns Promise resolving to exit code: 0 if no lint errors, 1 if lint errors found.
  */
@@ -68,11 +61,6 @@ export async function runLint(
   return code;
 }
 
-/**
- * Parses CLI arguments for the tool.
- * @param rawArgs - Array of arguments (excluding node and script path)
- * @returns Parsed options and any error message.
- */
 /**
  * Parses CLI arguments for the tool.
  * @param rawArgs - Array of arguments (excluding node and script path)
@@ -160,11 +148,6 @@ export function parseCliArgs(rawArgs: string[]): {
     return { warnMode, showHelp, verbose, parallelism, ignoreList, error: String(err) };
   }
 
-  // Handle too many positional arguments
-  if (program.args.length > 1) {
-    return { warnMode, showHelp, verbose, parallelism, ignoreList, error: 'Too many arguments' };
-  }
-
   // Check for too many positional arguments
   const args = program.args;
   if (args.length > 1) {
@@ -181,12 +164,6 @@ export function parseCliArgs(rawArgs: string[]): {
 
   return { warnMode, showHelp, verbose, parallelism, ignoreList, diffFile, scanDir };
 }
-/**
- * Scans a directory for files containing "LINT." and validates directive formatting.
- * @param dir Directory path to scan.
- * @param verbose Whether to enable verbose logging.
- * @returns Promise resolving to exit code: 0 if no errors, 1 if validation errors found.
- */
 /**
  * Scans a directory for files containing "LINT." and validates directive formatting in parallel.
  * Detects duplicate IfChange labels or Label names within a single file.
