@@ -112,9 +112,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: "16"  # or your preferred version
-      - name: Install dependencies
-        run: npm ci
+          node-version: "23"  # or your preferred version
+      - name: Install IFTT-lint
+        run: npm install -g ifttt-lint
+      - name: Validate lint pragmas
+        run: iftt-lint --verbose --scan .
       - name: Compute diff from common ancestor
         run: |
           BASE_SHA=${{ github.event.pull_request.base.sha }}
