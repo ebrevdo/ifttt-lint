@@ -90,6 +90,42 @@ The project structure:
 - `dist/` - Compiled JavaScript output
 - `tests/` - Jest unit tests
 
+## GitHub Actions Integration
+
+To run `ifttt-lint` automatically on pull requests, add a GitHub Actions workflow (e.g., `.github/workflows/ifttt-lint.yml`) with the following configuration:
+
+```yaml
+name: IFTTT Lint
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0      # Fetch full history for merge-base
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "16"  # or your preferred version
+      - name: Install dependencies
+        run: npm ci
+      - name: Compute diff from common ancestor
+        run: |
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          MERGE_BASE=$(git merge-base HEAD $BASE_SHA)
+          git diff $MERGE_BASE HEAD > changes.diff
+      - name: Run IFTTT Lint
+        run: npx ifttt-lint changes.diff
+```
+
+This workflow computes the diff from the common ancestor between the PR branch (`HEAD`) and the base branch, saves it to `changes.diff`, and runs `ifttt-lint` against that diff.
+
 ## Contributing
 1. Fork the repo
 2. Create a branch (`git checkout -b feature/xyz`)
