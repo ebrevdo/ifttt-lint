@@ -242,7 +242,7 @@ if (require.main === module) {
   }
   if (scanDir) {
     // Determine parallelism for scan mode
-    const scanParallelism = parallelism >= 0 ? parallelism : os.cpus().length;
+    const scanParallelism = parallelism >= 0 ? parallelism : Math.max(os.cpus().length, 1);
     runScan(scanDir, scanParallelism, verbose)
       .then(code => process.exit(code))
       .catch(err => {
@@ -251,7 +251,7 @@ if (require.main === module) {
       });
   } else {
     // Determine default parallelism (number of CPU cores)
-    const defaultParallelism = os.cpus().length;
+    const defaultParallelism = Math.max(os.cpus().length, 1);
     // Execute lint, passing through ignore patterns
     runLint(
       { filePath: diffFile, stdin: process.stdin },
