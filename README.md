@@ -159,7 +159,7 @@ jobs:
           MERGE_BASE=$(git merge-base HEAD $BASE_SHA)
           git diff $MERGE_BASE HEAD > changes.diff
       - name: Run IFTTT Lint
-        run: npx ifttt-lint changes.diff
+        run: npx ifttt-lint -i '**/*.md' changes.diff
 ```
 
 This workflow computes the diff from the common ancestor between the PR branch (`HEAD`) and the base branch, saves it to `changes.diff`, and runs `ifttt-lint` against that diff.

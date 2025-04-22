@@ -24,22 +24,6 @@ interface PairDirective {
  * @param concurrency - Maximum number of concurrent parsing tasks.
  * @returns Promise resolving to 0 if no lint errors, or 1 if errors were found.
  */
-// File extensions to silently ignore (none)
-const IGNORED_EXTENSIONS = new Set<string>();
-/**
- * Determine whether the given file path should be treated as a code file for lint directives.
- */
-function isCodeFile(file: string): boolean {
-  const ext = path.extname(file).toLowerCase();
-  return !IGNORED_EXTENSIONS.has(ext);
-}
-/**
- * Lints a unified diff against file directives and returns an exit code.
- *
- * @param diffText - The unified diff text to process.
- * @param concurrency - Maximum number of concurrent parsing tasks.
- * @returns Promise resolving to 0 if no lint errors, or 1 if errors were found.
- */
 export async function lintDiff(
   diffText: string,
   concurrency: number = os.cpus().length,
@@ -81,12 +65,6 @@ export async function lintDiff(
   const allChangedRaw = Array.from(changesMap.keys());
   const changedFiles: string[] = [];
   for (const file of allChangedRaw) {
-    const ext = path.extname(file).toLowerCase();
-    // Silent ignore for explicitly ignored extensions
-    if (IGNORED_EXTENSIONS.has(ext)) {
-      if (verbose) verboseLog(`Skipping ignored file: ${file}`);
-      continue;
-    }
     // Exclude user-specified patterns
     const base = path.basename(file);
     const skip = ignorePatterns.some(p =>
@@ -221,7 +199,7 @@ export async function lintDiff(
   });
 
   // Only parse label directives in code files
-  const codeTargetFiles = Array.from(targetFiles).filter(isCodeFile);
+  const codeTargetFiles = Array.from(targetFiles);
   // Step 2: Parse label ranges for targets using the same Piscina pool
   await Promise.all(codeTargetFiles.map(async file => {
     if (verbose) verboseLog(`Processing target file: ${file}`);
