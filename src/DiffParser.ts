@@ -60,7 +60,42 @@ export function parseChangedLines(diffText: string): Map<string, FileChanges> {
       continue;
     }
     // Determine file path: prefer 'to' unless it's '/dev/null', else use 'from'
-    const raw = file.to && file.to !== '/dev/null' ? file.to : file.from;
+    let raw = file.to && file.to !== '/dev/null' ? file.to : file.from;
+    raw = raw.trim();
+    // Strip surrounding quotes if present
+    if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+      raw = raw.slice(1, -1);
+    }
+    // Decode C-style octal escapes (e.g., \360) to actual UTF-8 characters
+    raw = ((): string => {
+      const bytes: number[] = [];
+      let i = 0;
+      while (i < raw.length) {
+        if (raw[i] === '\\') {
+          let j = i + 1;
+          let oct = '';
+          // collect up to 3 octal digits
+          while (j < raw.length && oct.length < 3 && /[0-7]/.test(raw[j])) {
+            oct += raw[j];
+            j++;
+          }
+          if (oct.length > 0) {
+            bytes.push(parseInt(oct, 8));
+            i = j;
+            continue;
+          }
+          // not an octal escape, treat literal '\'
+          bytes.push(raw.charCodeAt(i));
+          i++;
+        } else {
+          // normal character: encode as UTF-8 bytes
+          const buf = Buffer.from(raw[i], 'utf-8');
+          for (const b of buf) bytes.push(b);
+          i++;
+        }
+      }
+      return Buffer.from(bytes).toString('utf-8');
+    })();
     // Strip single-character prefix (e.g., 'a/', 'b/')
     const filePath = raw.length > 1 && raw[1] === '/' ? raw.slice(2) : raw;
     const added = new Set<number>();

@@ -58,4 +58,42 @@ describe('parseChangedLines spurious header filtering', () => {
     expect(changes.removedLines.has(1)).toBe(true);
     expect(changes.addedLines.has(1)).toBe(true);
   });
+
+  it('strips surrounding quotes and prefixes for quoted file paths', () => {
+    const diff = [
+      'diff --git "a/my file.txt" "b/my file.txt"',
+      'index 111..222 100644',
+      '--- "a/my file.txt"',
+      '+++ "b/my file.txt"',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new'
+    ].join('\n');
+    const result = parseChangedLines(diff);
+    expect(result.size).toBe(1);
+    expect(result.has('my file.txt')).toBe(true);
+    const changes = result.get('my file.txt')!;
+    expect(changes.removedLines.has(1)).toBe(true);
+    expect(changes.addedLines.has(1)).toBe(true);
+  });
+
+  it('decodes octal-escaped paths with non-ASCII chars', () => {
+    const esc = '3_\\360\\237\\224\\216_test.py';
+    const diff = [
+      `diff --git a/${esc} b/${esc}`,
+      'index 1..2 100644',
+      `--- a/${esc}`,
+      `+++ b/${esc}`,
+      '@@ -1 +1 @@',
+      '-old',
+      '+new'
+    ].join('\n');
+    const result = parseChangedLines(diff);
+    const expectedName = '3_🔎_test.py';
+    expect(result.size).toBe(1);
+    expect(result.has(expectedName)).toBe(true);
+    const changes = result.get(expectedName)!;
+    expect(changes.removedLines.has(1)).toBe(true);
+    expect(changes.addedLines.has(1)).toBe(true);
+  });
 });
