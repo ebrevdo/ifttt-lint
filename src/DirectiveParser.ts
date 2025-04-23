@@ -27,7 +27,22 @@ const endLabelRegex = /LINT\.EndLabel/;
 export async function parseFileDirectives(
   filePath: string
 ): Promise<LintDirective[]> {
-  const content = await fs.readFile(filePath, 'utf-8');
+  let content: string;
+  try {
+    content = await fs.readFile(filePath, 'utf-8');
+  } catch (err: unknown) {
+    // If path is a directory, skip without error
+    if (
+      typeof err === 'object' &&
+      err !== null &&
+      'code' in err &&
+      (err as { code?: string }).code === 'EISDIR'
+    ) {
+      return [];
+    }
+    // Propagate other errors (e.g., permission issues)
+    throw err;
+  }
   // Use multi-language comment extractor to find all comments in source
   // Pass filename so extractor can choose comment syntax by extension
   let commentsMap: Record<string, { content?: string }>;
@@ -46,9 +61,8 @@ export async function parseFileDirectives(
     }
     try {
       commentsMap = extractComments(content, { filename: fallback });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`Warning: Could not extract comments from ${filePath}: ${msg}`);
+    } catch {
+      // Could not extract comments (e.g., JSON or unsupported extensions): ignore silently
       return [];
     }
   }

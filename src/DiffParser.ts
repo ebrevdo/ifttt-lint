@@ -39,10 +39,18 @@ import parseDiff from 'parse-diff';
  * @returns A Map where each key is a file path and its value contains added and removed line numbers.
  */
 export function parseChangedLines(diffText: string): Map<string, FileChanges> {
-  // Remove 'diff ' headers to avoid parse-diff header misparsing
+  // Sanitize diff input: drop git diff headers and spurious '--- ' or '+++ ' lines not indicating actual file paths
   const filtered = diffText
     .split(/\r?\n/)
-    .filter(line => !line.startsWith('diff '))
+    .filter(line => {
+      // drop main diff header lines
+      if (line.startsWith('diff ')) return false;
+      // drop spurious file-header-like lines: raw '--- ' not followed by a valid file path (e.g., prefix/ or /dev/null)
+      if (/^--- /.test(line) && !/^--- [^ ]+\//.test(line)) return false;
+      // drop spurious new-file-header-like lines: raw '+++ ' not followed by a valid file path (e.g., prefix/ or /dev/null)
+      if (/^\+\+\+ /.test(line) && !/^\+\+\+ [^ ]+\//.test(line)) return false;
+      return true;
+    })
     .join('\n');
   const files = parseDiff(filtered);
   const result = new Map<string, FileChanges>();
