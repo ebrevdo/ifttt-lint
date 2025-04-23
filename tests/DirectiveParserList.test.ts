@@ -48,4 +48,11 @@ describe('DirectiveParser ThenChange array literal', () => {
       { kind: 'ThenChange', line: 1, target: 'file2.ts#lbl' }
     ]);
   });
+  describe('parseFileDirectives on directories', () => {
+    it('returns empty directive list for directory paths', async () => {
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-dir-'));
+      const directives = await parseFileDirectives(tmpDir);
+      expect(directives).toEqual([]);
+    });
+  });
 });

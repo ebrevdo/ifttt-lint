@@ -27,14 +27,29 @@ const endLabelRegex = /LINT\.EndLabel/;
 export async function parseFileDirectives(
   filePath: string
 ): Promise<LintDirective[]> {
-  const content = await fs.readFile(filePath, 'utf-8');
+  let content: string;
+  try {
+    content = await fs.readFile(filePath, 'utf-8');
+  } catch (err: unknown) {
+    // If path is a directory, skip without error
+    if (
+      typeof err === 'object' &&
+      err !== null &&
+      'code' in err &&
+      (err as { code?: string }).code === 'EISDIR'
+    ) {
+      return [];
+    }
+    // Propagate other errors (e.g., permission issues)
+    throw err;
+  }
   // Use multi-language comment extractor to find all comments in source
   // Pass filename so extractor can choose comment syntax by extension
   let commentsMap: Record<string, { content?: string }>;
+  // Try extracting comments by file extension; if unsupported, fall back or warn
   try {
     commentsMap = extractComments(content, { filename: filePath });
   } catch {
-    // Fallback for unsupported extensions (e.g., .bzl): remap to Python or JS
     const ext = path.extname(filePath).toLowerCase();
     let fallback: string;
     if (ext === '.bzl') {
@@ -44,7 +59,12 @@ export async function parseFileDirectives(
       // Default to JavaScript
       fallback = filePath.replace(path.extname(filePath), '.js');
     }
-    commentsMap = extractComments(content, { filename: fallback });
+    try {
+      commentsMap = extractComments(content, { filename: fallback });
+    } catch {
+      // Could not extract comments (e.g., JSON or unsupported extensions): ignore silently
+      return [];
+    }
   }
   // commentsMap maps starting line numbers (as strings) to comment objects
   const directives: LintDirective[] = [];
