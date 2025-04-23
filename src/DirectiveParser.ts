@@ -31,10 +31,10 @@ export async function parseFileDirectives(
   // Use multi-language comment extractor to find all comments in source
   // Pass filename so extractor can choose comment syntax by extension
   let commentsMap: Record<string, { content?: string }>;
+  // Try extracting comments by file extension; if unsupported, fall back or warn
   try {
     commentsMap = extractComments(content, { filename: filePath });
   } catch {
-    // Fallback for unsupported extensions (e.g., .bzl): remap to Python or JS
     const ext = path.extname(filePath).toLowerCase();
     let fallback: string;
     if (ext === '.bzl') {
@@ -44,7 +44,13 @@ export async function parseFileDirectives(
       // Default to JavaScript
       fallback = filePath.replace(path.extname(filePath), '.js');
     }
-    commentsMap = extractComments(content, { filename: fallback });
+    try {
+      commentsMap = extractComments(content, { filename: fallback });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`Warning: Could not extract comments from ${filePath}: ${msg}`);
+      return [];
+    }
   }
   // commentsMap maps starting line numbers (as strings) to comment objects
   const directives: LintDirective[] = [];
