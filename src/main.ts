@@ -49,9 +49,14 @@ export async function runLint(
   // Validate diff input: non-empty text must yield at least one file change
   const changesMap = parseChangedLines(diffText);
   if (diffText.trim().length > 0 && changesMap.size === 0) {
-    // Input text provided but no diff files detected
-    const snippet = diffText.slice(0, 100).replace(/\r?\n/g, '\\n');
-    throw new Error(`Invalid diff input: no file changes detected (snippet: "${snippet}...")`);
+    // Check if the diff contains any valid file operations (including deletions)
+    // Look for diff headers that indicate file operations
+    const hasValidFileOps = /^(---|diff --git|index [0-9a-f]+\.\.[0-9a-f]+)/m.test(diffText);
+    if (!hasValidFileOps) {
+      // Input text provided but no diff files detected
+      const snippet = diffText.slice(0, 100).replace(/\r?\n/g, '\\n');
+      throw new Error(`Invalid diff input: no file changes detected (snippet: "${snippet}...")`);
+    }
   }
   // Log parallelism to stderr for verbose output only
   if (verbose) {
