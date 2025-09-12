@@ -196,7 +196,7 @@ export async function runScan(dir: string, parallelism: number, verbose: boolean
   }
   // Create worker pool for parallel directive parsing
   const workerScript = path.resolve(__dirname, '../dist/parserWorker.js');
-  const pool = new Piscina({ filename: workerScript, maxThreads: parallelism });
+  const pool = new Piscina({ filename: workerScript, maxThreads: parallelism, recordTiming: false });
   let errors = 0;
   // Dispatch validation tasks in parallel
   const tasks = files.map(async file => {
