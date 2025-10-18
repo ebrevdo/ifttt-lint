@@ -250,6 +250,7 @@ export async function lintDiff(
     }
     const ranges = new Map<string, LineRange>();
     const pending: { name: string; start: number }[] = [];
+    let activeIfLabel: { name: string; start: number } | null = null;
     directives.forEach(d => {
       if (d.kind === 'Label') {
         const labelDirective = d as import('./LintPrimitives').LabelDirective;
@@ -257,8 +258,33 @@ export async function lintDiff(
       } else if (d.kind === 'EndLabel') {
         const last = pending.pop();
         if (last) ranges.set(last.name, { startLine: last.start, endLine: d.line - 1 });
+      } else if (d.kind === 'IfChange') {
+        const ic = d as IfChangeDirective;
+        if (activeIfLabel) {
+          const { name, start } = activeIfLabel;
+          if (!ranges.has(name)) {
+            const endLine = Math.max(start, d.line - 1);
+            ranges.set(name, { startLine: start, endLine });
+          }
+        }
+        activeIfLabel = ic.label ? { name: ic.label, start: d.line + 1 } : null;
+      } else if (d.kind === 'ThenChange') {
+        if (activeIfLabel) {
+          const { name, start } = activeIfLabel;
+          if (!ranges.has(name)) {
+            const endLine = Math.max(start, d.line - 1);
+            ranges.set(name, { startLine: start, endLine });
+          }
+        }
+        activeIfLabel = null;
       }
     });
+    if (activeIfLabel) {
+      const { name, start } = activeIfLabel;
+      if (!ranges.has(name)) {
+        ranges.set(name, { startLine: start, endLine: start });
+      }
+    }
     labelRanges.set(file, ranges);
     if (verbose) verboseLog(`Finished processing target file: ${file}`);
   }));

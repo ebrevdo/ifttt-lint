@@ -328,6 +328,76 @@ describe('lintDiff', () => {
     expect(errors[0]).toMatch(/-> ThenChange '#label1' \(line 5\): expected changes in '.+file1\.ts#label1' \(2-2\), but none found/);
   });
 
+  test('allows ThenChange to reference IfChange label in another file', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-iflabel-'));
+    const file1 = path.join(tmpDir, 'file1.py');
+    const file2 = path.join(tmpDir, 'file2.py');
+    const file1Content = [
+      '# LINT.IfChange("label")',
+      'value = 1',
+      '# LINT.ThenChange("file2.py#other")'
+    ].join('\n');
+    const file2Content = [
+      '# LINT.IfChange("other")',
+      'value = 1',
+      '# LINT.ThenChange("file1.py#label")'
+    ].join('\n');
+    await fs.writeFile(file1, file1Content, 'utf-8');
+    await fs.writeFile(file2, file2Content, 'utf-8');
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1,3 +1,3 @@',
+      ' # LINT.IfChange("label")',
+      '-value = 1',
+      '+value = 2',
+      ' # LINT.ThenChange("file2.py#other")',
+      `--- a/${file2}`,
+      `+++ b/${file2}`,
+      '@@ -1,3 +1,3 @@',
+      ' # LINT.IfChange("other")',
+      '-value = 1',
+      '+value = 2',
+      ' # LINT.ThenChange("file1.py#label")'
+    ].join('\n');
+    const code = await lintDiff(diff, 1);
+    expect(code).toBe(0);
+  });
+
+  test('reports missing changes for referenced IfChange label', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-iflabel-missing-'));
+    const file1 = path.join(tmpDir, 'file1.py');
+    const file2 = path.join(tmpDir, 'file2.py');
+    const file1Content = [
+      '# LINT.IfChange("label")',
+      'value = 1',
+      '# LINT.ThenChange("file2.py#other")'
+    ].join('\n');
+    const file2Content = [
+      '# LINT.IfChange("other")',
+      'value = 1',
+      '# LINT.ThenChange("file1.py#label")'
+    ].join('\n');
+    await fs.writeFile(file1, file1Content, 'utf-8');
+    await fs.writeFile(file2, file2Content, 'utf-8');
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1,3 +1,3 @@',
+      ' # LINT.IfChange("label")',
+      '-value = 1',
+      '+value = 2',
+      ' # LINT.ThenChange("file2.py#other")'
+    ].join('\n');
+    const errors: string[] = [];
+    (console.log as jest.Mock).mockImplementation(msg => errors.push(msg));
+    const code = await lintDiff(diff, 1);
+    expect(code).toBe(1);
+    expect(errors.some(e => e.includes(`target file '${file2}' not changed.`))).toBe(true);
+    expect(errors.some(e => e.includes("label 'other' not found"))).toBe(false);
+    (console.log as jest.Mock).mockImplementation(() => {});
+  });
+
   test('errors on ThenChange without preceding IfChange', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-'));
     const file1 = path.join(tmpDir, 'file1.ts');
