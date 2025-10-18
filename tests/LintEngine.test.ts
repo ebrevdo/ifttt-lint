@@ -675,4 +675,182 @@ describe('lintDiff', () => {
     const result = await lintDiff(diff, 1, true);
     expect(result).toBe(0);
   });
+
+  test('detects changes within IfChange block range, not just pragma line', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-block-range-'));
+    const file1 = path.join(tmpDir, 'config.py');
+    const file2 = path.join(tmpDir, 'constants.py');
+
+    // Create a file with IfChange block spanning multiple lines
+    const file1Content = [
+      '# Configuration settings',
+      '# LINT.IfChange',
+      'class StatusType(StrEnum):',
+      '    ACTIVE = "active"',
+      '    INACTIVE = "inactive"',
+      '    # Additional status values...',
+      '# LINT.ThenChange("constants.py")',
+      '# End of file'
+    ].join('\n');
+
+    const file2Content = [
+      '# Constants file',
+      'STATUS_LIST = ["active", "inactive"]'
+    ].join('\n');
+
+    await fs.writeFile(file1, file1Content);
+    await fs.writeFile(file2, file2Content);
+
+    // Create diff that changes a line within the IfChange block (line 5),
+    // but NOT the IfChange pragma line itself (line 2)
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -3,5 +3,6 @@',
+      ' class StatusType(StrEnum):',
+      '     ACTIVE = "active"',
+      '     INACTIVE = "inactive"',
+      '+    PENDING = "pending"',
+      '     # Additional status values...',
+      ' # LINT.ThenChange("constants.py")'
+    ].join('\n');
+
+    // The linter should detect that line 5 (within the IfChange block) was modified
+    // and flag that constants.py needs to be changed too
+    const result = await lintDiff(diff, 1, true);
+    expect(result).toBe(1); // Should return error code 1
+
+    // Verify the error message mentions the expected files
+    const errors: string[] = [];
+    jest.spyOn(console, 'log').mockImplementation(msg => errors.push(msg));
+    await lintDiff(diff, 1, true);
+    expect(errors.some(e =>
+      e.includes('config.py:2') &&
+      e.includes('ThenChange') &&
+      e.includes('constants.py') &&
+      e.includes('not changed')
+    )).toBe(true);
+  });
+
+  test('cross-referenced files: ignores changes outside IfChange blocks', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-cross-ref-'));
+    const file1 = path.join(tmpDir, 'source.py');
+    const file2 = path.join(tmpDir, 'target.py');
+
+    // Create source file with IfChange block and some code outside
+    const file1Content = [
+      '# Header comment',
+      'def helper_function():',
+      '    return "helper"',
+      '# LINT.IfChange',
+      'class StatusType(StrEnum):',
+      '    ACTIVE = "active"',
+      '    INACTIVE = "inactive"',
+      '# LINT.ThenChange("target.py")',
+      'def another_function():',
+      '    return "another"'
+    ].join('\n');
+
+    // Create target file that ALSO has IfChange blocks (cross-reference)
+    const file2Content = [
+      '# Target file header',
+      '# LINT.IfChange',
+      'STATUS_LIST = ["active", "inactive"]',
+      '# LINT.ThenChange("source.py")',
+      'def target_helper():',
+      '    return "target"'
+    ].join('\n');
+
+    await fs.writeFile(file1, file1Content);
+    await fs.writeFile(file2, file2Content);
+
+    // Create diff that changes code OUTSIDE the IfChange block (line 2 and 9)
+    const diffOutsideBlocks = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1,10 +1,10 @@',
+      ' # Header comment',
+      '-def helper_function():',
+      '+def helper_function_modified():',
+      '     return "helper"',
+      ' # LINT.IfChange',
+      ' class StatusType(StrEnum):',
+      '     ACTIVE = "active"',
+      '     INACTIVE = "inactive"',
+      ' # LINT.ThenChange("target.py")',
+      '-def another_function():',
+      '+def another_function_modified():',
+      '     return "another"'
+    ].join('\n');
+
+    // Should NOT trigger lint error because changes are outside IfChange blocks
+    const result1 = await lintDiff(diffOutsideBlocks, 1, true);
+    expect(result1).toBe(0); // No error
+
+    // Now create diff that changes code INSIDE the IfChange block (line 6)
+    const diffInsideBlock = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -4,7 +4,7 @@',
+      ' # LINT.IfChange',
+      ' class StatusType(StrEnum):',
+      '     ACTIVE = "active"',
+      '-    INACTIVE = "inactive"',
+      '+    PENDING = "pending"',
+      ' # LINT.ThenChange("target.py")',
+      ' def another_function():',
+      '     return "another"'
+    ].join('\n');
+
+    // Should trigger lint error because change is inside IfChange block
+    const result2 = await lintDiff(diffInsideBlock, 1, true);
+    expect(result2).toBe(1); // Should error
+  });
+
+  test('non-cross-referenced files: detects any changes within IfChange block', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-non-cross-ref-'));
+    const file1 = path.join(tmpDir, 'source.py');
+    const file2 = path.join(tmpDir, 'target.py');
+
+    // Create source file with IfChange block
+    const file1Content = [
+      '# Header comment',
+      '# LINT.IfChange',
+      'class StatusType(StrEnum):',
+      '    ACTIVE = "active"',
+      '    INACTIVE = "inactive"',
+      '# LINT.ThenChange("target.py")',
+      'def helper_function():',
+      '    return "helper"'
+    ].join('\n');
+
+    // Create target file WITHOUT IfChange blocks (no cross-reference)
+    const file2Content = [
+      '# Target file header',
+      'STATUS_LIST = ["active", "inactive"]',
+      'def target_helper():',
+      '    return "target"'
+    ].join('\n');
+
+    await fs.writeFile(file1, file1Content);
+    await fs.writeFile(file2, file2Content);
+
+    // Create diff that changes ANY line within the IfChange block range (lines 2-6)
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -2,6 +2,6 @@',
+      ' # LINT.IfChange',
+      ' class StatusType(StrEnum):',
+      '     ACTIVE = "active"',
+      '-    INACTIVE = "inactive"',
+      '+    PENDING = "pending"',
+      ' # LINT.ThenChange("target.py")',
+      ' def helper_function():'
+    ].join('\n');
+
+    // Should trigger lint error (original behavior for non-cross-referenced files)
+    const result = await lintDiff(diff, 1, true);
+    expect(result).toBe(1); // Should error
+  });
 });
