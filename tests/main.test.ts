@@ -41,6 +41,21 @@ describe('runLint', () => {
     await expect(runLint({ diffText: 'not a diff' }, concurrency, true))
       .rejects.toThrow('Invalid diff input');
   });
+
+  it('handles diff with only deleted files without error', async () => {
+    // Valid diff format with only deleted files (to /dev/null) should not throw error
+    const deletedFileDiff = `diff --git a/infrastructure/terraform/env-corp/us-west-2/aws-corp/s3-sync.tf b/infrastructure/terraform/env-corp/us-west-2/aws-corp/s3-sync.tf
+deleted file mode 100644
+index 1234567..0000000
+--- a/infrastructure/terraform/env-corp/us-west-2/aws-corp/s3-sync.tf
++++ /dev/null
+@@ -1,10 +0,0 @@
+-resource "aws_s3_bucket" "sync" {
+-  bucket = "my-sync-bucket"
+-}`;
+    const code = await runLint({ diffText: deletedFileDiff }, concurrency, true);
+    expect(code).toBe(0);
+  });
 });
 
 describe('parseCliArgs', () => {
