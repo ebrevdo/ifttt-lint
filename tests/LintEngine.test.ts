@@ -301,6 +301,33 @@ describe('lintDiff', () => {
     expect(result).toBe(1);
   });
 
+  test('error when labeled change missing in same file', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-'));
+    const file1 = path.join(tmpDir, 'file1.ts');
+    const file1Content = [
+      '// LINT.Label("label1")',
+      'console.log("unchanged");',
+      '// LINT.EndLabel',
+      '// LINT.IfChange',
+      '// LINT.ThenChange("#label1")',
+    ].join('\n');
+    await fs.writeFile(file1, file1Content);
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -4,4 +4,4 @@',
+      '-// LINT.IfChange',
+      '+// LINT.IfChange // changed',
+    ].join('\n');
+
+    const errors: string[] = [];
+    jest.spyOn(console, 'log').mockImplementation(msg => errors.push(msg));
+    const result = await lintDiff(diff, 1);
+    expect(result).toBe(1);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toMatch(/-> ThenChange '#label1' \(line 5\): expected changes in '.+file1\.ts#label1' \(2-2\), but none found/);
+  });
+
   test('errors on ThenChange without preceding IfChange', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-'));
     const file1 = path.join(tmpDir, 'file1.ts');
