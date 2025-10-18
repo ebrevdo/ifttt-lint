@@ -314,15 +314,7 @@ export async function lintDiff(
     const changes = changesMap.get(p.file);
     if (!changes) continue;
 
-    // Check if any line in the range from IfChange to ThenChange (inclusive) was modified
-    const triggered = (() => {
-      for (let line = p.ifLine; line <= p.thenLine; line++) {
-        if (changes.addedLines.has(line) || changes.removedLines.has(line)) {
-          return true;
-        }
-      }
-      return false;
-    })();
+    const triggered = changes.addedLines.has(p.ifLine) || changes.removedLines.has(p.ifLine);
     if (!triggered) continue;
 
     const label = p.thenTarget.split('#')[1];
