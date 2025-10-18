@@ -109,10 +109,6 @@ $ npm install
 $ npm run build
 ```
 
-> **Note:** Running `npm audit fix` updates `package-lock.json` directly, so you do not need to
-> perform a separate relock afterwards. A quick `npm install --package-lock-only` is harmless if
-> you want to double-check, but it should result in no changes when the lockfile is already up to
-> date.
 Run tests:
 ```bash
 $ npm test
