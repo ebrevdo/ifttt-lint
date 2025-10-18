@@ -14,6 +14,7 @@ interface PairDirective {
   /** Optional label from the IfChange directive */
   ifLabel?: string;
   thenTarget: string;
+  thenTargetPath: string;
   thenLine: number;
 }
 
@@ -108,7 +109,15 @@ export async function lintDiff(
         if (!currentIf) {
           orphanThen.push({ file, then: tc });
         } else {
-          pairs.push({ file, ifLine: currentIf.line, ifLabel: currentIf.label, thenTarget: tc.target, thenLine: d.line });
+          const thenTarget = tc.target;
+          const thenTargetName = thenTarget.split('#')[0];
+          const thenTargetPath = thenTargetName === ""
+            ? file
+            : path.isAbsolute(thenTargetName)
+            ? thenTargetName
+            : path.join(path.dirname(file), thenTargetName);
+
+          pairs.push({ file, ifLine: currentIf.line, ifLabel: currentIf.label, thenTarget, thenTargetPath, thenLine: d.line });
           sawThen = true;
         }
       }
@@ -191,11 +200,7 @@ export async function lintDiff(
   // Determine unique target file paths (resolved relative to source file)
   const targetFiles = new Set<string>();
   pairs.forEach(p => {
-    const [targetName] = p.thenTarget.split('#');
-    const targetPath = path.isAbsolute(targetName)
-      ? targetName
-      : path.join(path.dirname(p.file), targetName);
-    targetFiles.add(targetPath);
+    targetFiles.add(p.thenTargetPath);
   });
 
   // Only parse label directives in code files
@@ -217,10 +222,7 @@ export async function lintDiff(
     } catch {
       // Missing target file: report per corresponding ThenChange pragma, unless ignored
       for (const p of pairs) {
-        const [targetName] = p.thenTarget.split('#');
-        const targetPath = path.isAbsolute(targetName)
-          ? targetName
-          : path.join(path.dirname(p.file), targetName);
+        const targetPath = p.thenTargetPath;
         if (targetPath === file) {
           const skipTarget = shouldIgnore(p.thenTarget);
           const skipLabel = p.ifLabel
@@ -248,6 +250,7 @@ export async function lintDiff(
     }
     const ranges = new Map<string, LineRange>();
     const pending: { name: string; start: number }[] = [];
+    let activeIfLabel: { name: string; start: number } | null = null;
     directives.forEach(d => {
       if (d.kind === 'Label') {
         const labelDirective = d as import('./LintPrimitives').LabelDirective;
@@ -255,8 +258,33 @@ export async function lintDiff(
       } else if (d.kind === 'EndLabel') {
         const last = pending.pop();
         if (last) ranges.set(last.name, { startLine: last.start, endLine: d.line - 1 });
+      } else if (d.kind === 'IfChange') {
+        const ic = d as IfChangeDirective;
+        if (activeIfLabel) {
+          const { name, start } = activeIfLabel;
+          if (!ranges.has(name)) {
+            const endLine = Math.max(start, d.line - 1);
+            ranges.set(name, { startLine: start, endLine });
+          }
+        }
+        activeIfLabel = ic.label ? { name: ic.label, start: d.line + 1 } : null;
+      } else if (d.kind === 'ThenChange') {
+        if (activeIfLabel) {
+          const { name, start } = activeIfLabel;
+          if (!ranges.has(name)) {
+            const endLine = Math.max(start, d.line - 1);
+            ranges.set(name, { startLine: start, endLine });
+          }
+        }
+        activeIfLabel = null;
       }
     });
+    if (activeIfLabel) {
+      const { name, start } = activeIfLabel;
+      if (!ranges.has(name)) {
+        ranges.set(name, { startLine: start, endLine: start });
+      }
+    }
     labelRanges.set(file, ranges);
     if (verbose) verboseLog(`Finished processing target file: ${file}`);
   }));
@@ -286,66 +314,11 @@ export async function lintDiff(
     const changes = changesMap.get(p.file);
     if (!changes) continue;
 
-    const parts = p.thenTarget.split('#');
-    const targetName = parts[0];
-    const label = parts[1];
-    const targetFile = path.isAbsolute(targetName)
-      ? targetName
-      : path.join(path.dirname(p.file), targetName);
-
-    // Check if any line in the IfChange block (from ifLine to thenLine) was modified
-    const allChangedLines = new Set([...changes.addedLines, ...changes.removedLines]);
-    
-    // Check if target file has IfChange blocks (cross-reference scenario)
-    let targetHasIfChangeBlocks = false;
-    if (directivesCache.has(targetFile)) {
-      try {
-        const targetDirectives = await directivesCache.get(targetFile)!;
-        targetHasIfChangeBlocks = targetDirectives?.some(d => d.kind === 'IfChange') || false;
-      } catch {
-        // Target file doesn't exist or can't be parsed, treat as non-cross-reference
-        targetHasIfChangeBlocks = false;
-      }
-    }
-    
-    let triggered = false;
-    if (targetHasIfChangeBlocks) {
-      // Cross-reference: Only trigger if changes are within IfChange blocks in source file
-      // Get all IfChange blocks in the source file
-      const sourceDirectives = await directivesCache.get(p.file);
-      if (sourceDirectives) {
-        const ifChangeBlocks: Array<{start: number, end: number}> = [];
-        let currentIfStart: number | null = null;
-        
-        for (const directive of sourceDirectives) {
-          if (directive.kind === 'IfChange') {
-            currentIfStart = directive.line;
-          } else if (directive.kind === 'ThenChange' && currentIfStart !== null) {
-            ifChangeBlocks.push({start: currentIfStart, end: directive.line});
-            currentIfStart = null;
-          }
-        }
-        
-        // Check if any changed line falls within any IfChange block
-        for (const changedLine of allChangedLines) {
-          if (ifChangeBlocks.some(block => changedLine >= block.start && changedLine <= block.end)) {
-            triggered = true;
-            break;
-          }
-        }
-      }
-    } else {
-      // No cross-reference: Use original behavior (any change in the specific IfChange block)
-      for (let lineNum = p.ifLine; lineNum <= p.thenLine; lineNum++) {
-        if (allChangedLines.has(lineNum)) {
-          triggered = true;
-          break;
-        }
-      }
-    }
-    
+    const triggered = changes.addedLines.has(p.ifLine) || changes.removedLines.has(p.ifLine);
     if (!triggered) continue;
 
+    const label = p.thenTarget.split('#')[1];
+    const targetFile = p.thenTargetPath;
     const targetChanges = changesMap.get(targetFile);
 
     // Build context for error messages including optional IfChange label
