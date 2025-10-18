@@ -314,19 +314,68 @@ export async function lintDiff(
     const changes = changesMap.get(p.file);
     if (!changes) continue;
 
-    // Check if any line in the range from IfChange to ThenChange (inclusive) was modified
-    const triggered = (() => {
-      for (let line = p.ifLine; line <= p.thenLine; line++) {
-        if (changes.addedLines.has(line) || changes.removedLines.has(line)) {
-          return true;
+    const parts = p.thenTarget.split('#');
+    const targetName = parts[0] ?? '';
+    const label = parts[1];
+    const targetFile = targetName.length === 0
+      ? p.file
+      : path.isAbsolute(targetName)
+        ? targetName
+        : path.join(path.dirname(p.file), targetName);
+
+    // Check if any line in the IfChange block (from ifLine to thenLine) was modified
+    const allChangedLines = new Set([...changes.addedLines, ...changes.removedLines]);
+
+    // Check if target file has IfChange blocks (cross-reference scenario)
+    let targetHasIfChangeBlocks = false;
+    if (directivesCache.has(targetFile)) {
+      try {
+        const targetDirectives = await directivesCache.get(targetFile)!;
+        targetHasIfChangeBlocks = targetDirectives?.some(d => d.kind === 'IfChange') || false;
+      } catch {
+        // Target file doesn't exist or can't be parsed, treat as non-cross-reference
+        targetHasIfChangeBlocks = false;
+      }
+    }
+
+    let triggered = false;
+    if (targetHasIfChangeBlocks) {
+      // Cross-reference: Only trigger if changes are within IfChange blocks in source file
+      // Get all IfChange blocks in the source file
+      const sourceDirectives = await directivesCache.get(p.file);
+      if (sourceDirectives) {
+        const ifChangeBlocks: Array<{start: number, end: number}> = [];
+        let currentIfStart: number | null = null;
+
+        for (const directive of sourceDirectives) {
+          if (directive.kind === 'IfChange') {
+            currentIfStart = directive.line;
+          } else if (directive.kind === 'ThenChange' && currentIfStart !== null) {
+            ifChangeBlocks.push({start: currentIfStart, end: directive.line});
+            currentIfStart = null;
+          }
+        }
+
+        // Check if any changed line falls within any IfChange block
+        for (const changedLine of allChangedLines) {
+          if (ifChangeBlocks.some(block => changedLine >= block.start && changedLine <= block.end)) {
+            triggered = true;
+            break;
+          }
         }
       }
-      return false;
-    })();
+    } else {
+      // No cross-reference: Use original behavior (any change in the specific IfChange block)
+      for (let lineNum = p.ifLine; lineNum <= p.thenLine; lineNum++) {
+        if (allChangedLines.has(lineNum)) {
+          triggered = true;
+          break;
+        }
+      }
+    }
+
     if (!triggered) continue;
 
-    const label = p.thenTarget.split('#')[1];
-    const targetFile = p.thenTargetPath;
     const targetChanges = changesMap.get(targetFile);
 
     // Build context for error messages including optional IfChange label

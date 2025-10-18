@@ -1,0 +1,118 @@
+name: Manual Release
+run-name: Release v${{ inputs.version }}${{ inputs.dry_run == 'true' && ' (dry run)' || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'SemVer (e.g. 1.4.0)'
+        required: true
+        type: string
+      notes:
+        description: 'Optional additional release notes (Markdown)'
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: 'Set to true to exercise the workflow without pushing or publishing'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: Production Release
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify CHANGELOG entry
+        run: |
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::error::CHANGELOG.md is missing. Add or update the changelog before cutting a release."
+            exit 1
+          fi
+          if ! grep -Eq "^##[[:space:]]+\[?(v)?${VERSION}\]?(\s|$)" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md must contain a heading for version ${VERSION} (optionally prefixed with v)."
+            exit 1
+          fi
+
+      - name: Configure git author
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+      - name: Ensure package version matches input
+        run: |
+          FILE_VERSION=$(node -p "require('./package.json').version")
+          if [ "$FILE_VERSION" != "${VERSION}" ]; then
+            echo "::error::package.json version ($FILE_VERSION) does not match input ${VERSION}. Update package.json before running the release workflow."
+            exit 1
+          fi
+          if [ -f package-lock.json ]; then
+            LOCK_VERSION=$(node -p "require('./package-lock.json').version")
+            if [ "$LOCK_VERSION" != "${VERSION}" ]; then
+              echo "::error::package-lock.json version ($LOCK_VERSION) does not match input ${VERSION}. Update package-lock.json before running the release workflow."
+              exit 1
+            fi
+          fi
+
+      - name: Verify clean working tree
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Repository contains uncommitted changes; ensure release commits are merged before triggering the workflow."
+            git status --short
+            exit 1
+          fi
+
+      - name: Create tag
+        run: |
+          TAG="v${VERSION}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists. Choose a new version or delete the existing tag."
+            exit 1
+          fi
+          git tag "$TAG"
+          if [ "${{ inputs.dry_run }}" = "false" ]; then
+            git push origin "$TAG"
+          else
+            echo "Dry run enabled; skipping push of $TAG."
+          fi
+
+      - name: Publish GitHub release
+        if: inputs.dry_run == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Release ${{ env.TAG }}
+          generate_release_notes: true
+          append_body: true
+          body: ${{ inputs.notes }}
