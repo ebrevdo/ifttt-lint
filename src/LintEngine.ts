@@ -84,7 +84,7 @@ export async function lintDiff(
 
   // Step 1: Parse directives, enforce pairing of IfChange/ThenChange
   const workerScript = path.resolve(__dirname, '../dist/parserWorker.js');
-  const pool = new Piscina({ filename: workerScript, maxThreads: concurrency });
+  const pool = new Piscina({ filename: workerScript, maxThreads: concurrency, recordTiming: false });
   const orphanThen: Array<{ file: string; then: ThenChangeDirective }> = [];
   const orphanIf: Array<{ file: string; line: number; label?: string }> = [];
   // Cache parse promises for file directives (changed and target files)
