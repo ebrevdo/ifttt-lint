@@ -1,0 +1,93 @@
+name: Manual Release
+run-name: Release v${{ inputs.version }}${{ inputs.dry_run == 'true' && ' (dry run)' || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'SemVer (e.g. 1.4.0)'
+        required: true
+        type: string
+      notes:
+        description: 'Optional additional release notes (Markdown)'
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: 'Set to true to exercise the workflow without pushing or publishing'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify CHANGELOG entry
+        run: |
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::error::CHANGELOG.md is missing. Add or update the changelog before cutting a release."
+            exit 1
+          fi
+          if ! grep -Eq "^##[[:space:]]+\[?(v)?${VERSION}\]?(\s|$)" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md must contain a heading for version ${VERSION} (optionally prefixed with v)."
+            exit 1
+          fi
+
+      - name: Configure git author
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+      - name: Bump version, tag, and push
+        run: |
+          npm version "$VERSION" --no-git-tag-version
+          git commit -am "Release ${VERSION}"
+          TAG="v${VERSION}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          if [ "${{ inputs.dry_run }}" = "false" ]; then
+            git tag "$TAG"
+            git push origin HEAD
+            git push origin "$TAG"
+          else
+            echo "Dry run enabled; skipping git tag/push."
+          fi
+
+      - name: Publish GitHub release
+        if: inputs.dry_run == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Release ${{ env.TAG }}
+          generate_release_notes: true
+          append_body: true
+          body: ${{ inputs.notes }}
