@@ -1,6 +1,6 @@
 {
   "name": "ifttt-lint",
-  "version": "0.6.0",
+  "version": "0.0.6",
   "description": "A high-concurrency IFTTT (IfThisThenThat) linter",
   "homepage": "https://www.github.com/ebrevdo/ifttt-lint",
   "main": "dist/main.js",
