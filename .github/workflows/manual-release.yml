@@ -69,42 +69,18 @@ jobs:
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
 
-      - name: Ensure package version matches input
+      - name: Bump version, tag, and push
         run: |
-          FILE_VERSION=$(node -p "require('./package.json').version")
-          if [ "$FILE_VERSION" != "${VERSION}" ]; then
-            echo "::error::package.json version ($FILE_VERSION) does not match input ${VERSION}. Update package.json before running the release workflow."
-            exit 1
-          fi
-          if [ -f package-lock.json ]; then
-            LOCK_VERSION=$(node -p "require('./package-lock.json').version")
-            if [ "$LOCK_VERSION" != "${VERSION}" ]; then
-              echo "::error::package-lock.json version ($LOCK_VERSION) does not match input ${VERSION}. Update package-lock.json before running the release workflow."
-              exit 1
-            fi
-          fi
-
-      - name: Verify clean working tree
-        run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::Repository contains uncommitted changes; ensure release commits are merged before triggering the workflow."
-            git status --short
-            exit 1
-          fi
-
-      - name: Create tag
-        run: |
+          npm version "$VERSION" --no-git-tag-version
+          git commit -am "Release ${VERSION}"
           TAG="v${VERSION}"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "::error::Tag $TAG already exists. Choose a new version or delete the existing tag."
-            exit 1
-          fi
-          git tag "$TAG"
           if [ "${{ inputs.dry_run }}" = "false" ]; then
+            git tag "$TAG"
+            git push origin HEAD
             git push origin "$TAG"
           else
-            echo "Dry run enabled; skipping push of $TAG."
+            echo "Dry run enabled; skipping git tag/push."
           fi
 
       - name: Publish GitHub release
