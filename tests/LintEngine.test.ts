@@ -301,6 +301,33 @@ describe('lintDiff', () => {
     expect(result).toBe(1);
   });
 
+  test('error when labeled change missing in same file', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-'));
+    const file1 = path.join(tmpDir, 'file1.ts');
+    const file1Content = [
+      '// LINT.Label("label1")',
+      'console.log("unchanged");',
+      '// LINT.EndLabel',
+      '// LINT.IfChange',
+      '// LINT.ThenChange("#label1")',
+    ].join('\n');
+    await fs.writeFile(file1, file1Content);
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -4,4 +4,4 @@',
+      '-// LINT.IfChange',
+      '+// LINT.IfChange // changed',
+    ].join('\n');
+
+    const errors: string[] = [];
+    jest.spyOn(console, 'log').mockImplementation(msg => errors.push(msg));
+    const result = await lintDiff(diff, 1);
+    expect(result).toBe(1);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toMatch(/-> ThenChange '#label1' \(line 5\): expected changes in '.+file1\.ts#label1' \(2-2\), but none found/);
+  });
+
   test('errors on ThenChange without preceding IfChange', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-'));
     const file1 = path.join(tmpDir, 'file1.ts');
@@ -490,5 +517,92 @@ describe('lintDiff', () => {
     errors.length = 0;
     const code2 = await lintDiff(diff, 1, true, ['fileA.ts#lblX']);
     expect(code2).toBe(0);
+  });
+
+  test('error when code between IfChange and ThenChange is modified but target not changed', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-between-'));
+    const file1 = path.join(tmpDir, 'file1.ts');
+    const file2 = path.join(tmpDir, 'file2.ts');
+    const file1Content = [
+      '// LINT.IfChange',
+      'const value = 1;',
+      '// LINT.ThenChange("file2.ts")'
+    ].join('\n');
+    const file2Content = ['const value = 1;'].join('\n');
+    await fs.writeFile(file1, file1Content);
+    await fs.writeFile(file2, file2Content);
+    // Modify the code between IfChange and ThenChange, but not the pragmas themselves
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1,3 +1,3 @@',
+      ' // LINT.IfChange',
+      '-const value = 1;',
+      '+const value = 2;',
+      ' // LINT.ThenChange("file2.ts")'
+    ].join('\n');
+    const result = await lintDiff(diff, 1, true);
+    expect(result).toBe(1);
+  });
+
+  test('no error when code between IfChange and ThenChange is modified and target is changed', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-between-ok-'));
+    const file1 = path.join(tmpDir, 'file1.ts');
+    const file2 = path.join(tmpDir, 'file2.ts');
+    const file1Content = [
+      '// LINT.IfChange',
+      'const value = 1;',
+      '// LINT.ThenChange("file2.ts")'
+    ].join('\n');
+    const file2Content = ['const value = 1;'].join('\n');
+    await fs.writeFile(file1, file1Content);
+    await fs.writeFile(file2, file2Content);
+    // Modify the code between IfChange and ThenChange, and also modify target
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1,3 +1,3 @@',
+      ' // LINT.IfChange',
+      '-const value = 1;',
+      '+const value = 2;',
+      ' // LINT.ThenChange("file2.ts")',
+      `--- a/${file2}`,
+      `+++ b/${file2}`,
+      '@@ -1,1 +1,1 @@',
+      '-const value = 1;',
+      '+const value = 2;'
+    ].join('\n');
+    const result = await lintDiff(diff, 1, true);
+    expect(result).toBe(0);
+  });
+
+  test('no error when only code outside IfChange/ThenChange block is modified', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lint-outside-'));
+    const file1 = path.join(tmpDir, 'file1.ts');
+    const file2 = path.join(tmpDir, 'file2.ts');
+    const file1Content = [
+      'const other = 0;',
+      '// LINT.IfChange',
+      'const value = 1;',
+      '// LINT.ThenChange("file2.ts")',
+      'const another = 2;'
+    ].join('\n');
+    const file2Content = ['const value = 1;'].join('\n');
+    await fs.writeFile(file1, file1Content);
+    await fs.writeFile(file2, file2Content);
+    // Modify code outside the IfChange/ThenChange block
+    const diff = [
+      `--- a/${file1}`,
+      `+++ b/${file1}`,
+      '@@ -1,5 +1,5 @@',
+      '-const other = 0;',
+      '+const other = 99;',
+      ' // LINT.IfChange',
+      ' const value = 1;',
+      ' // LINT.ThenChange("file2.ts")',
+      ' const another = 2;'
+    ].join('\n');
+    const result = await lintDiff(diff, 1, true);
+    expect(result).toBe(0);
   });
 });

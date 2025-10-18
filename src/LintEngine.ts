@@ -14,6 +14,7 @@ interface PairDirective {
   /** Optional label from the IfChange directive */
   ifLabel?: string;
   thenTarget: string;
+  thenTargetPath: string;
   thenLine: number;
 }
 
@@ -108,7 +109,15 @@ export async function lintDiff(
         if (!currentIf) {
           orphanThen.push({ file, then: tc });
         } else {
-          pairs.push({ file, ifLine: currentIf.line, ifLabel: currentIf.label, thenTarget: tc.target, thenLine: d.line });
+          const thenTarget = tc.target;
+          const thenTargetName = thenTarget.split('#')[0];
+          const thenTargetPath = thenTargetName === ""
+            ? file
+            : path.isAbsolute(thenTargetName)
+            ? thenTargetName
+            : path.join(path.dirname(file), thenTargetName);
+
+          pairs.push({ file, ifLine: currentIf.line, ifLabel: currentIf.label, thenTarget, thenTargetPath, thenLine: d.line });
           sawThen = true;
         }
       }
@@ -191,11 +200,7 @@ export async function lintDiff(
   // Determine unique target file paths (resolved relative to source file)
   const targetFiles = new Set<string>();
   pairs.forEach(p => {
-    const [targetName] = p.thenTarget.split('#');
-    const targetPath = path.isAbsolute(targetName)
-      ? targetName
-      : path.join(path.dirname(p.file), targetName);
-    targetFiles.add(targetPath);
+    targetFiles.add(p.thenTargetPath);
   });
 
   // Only parse label directives in code files
@@ -217,10 +222,7 @@ export async function lintDiff(
     } catch {
       // Missing target file: report per corresponding ThenChange pragma, unless ignored
       for (const p of pairs) {
-        const [targetName] = p.thenTarget.split('#');
-        const targetPath = path.isAbsolute(targetName)
-          ? targetName
-          : path.join(path.dirname(p.file), targetName);
+        const targetPath = p.thenTargetPath;
         if (targetPath === file) {
           const skipTarget = shouldIgnore(p.thenTarget);
           const skipLabel = p.ifLabel
@@ -286,15 +288,19 @@ export async function lintDiff(
     const changes = changesMap.get(p.file);
     if (!changes) continue;
 
-    const triggered = changes.addedLines.has(p.ifLine) || changes.removedLines.has(p.ifLine);
+    // Check if any line in the range from IfChange to ThenChange (inclusive) was modified
+    const triggered = (() => {
+      for (let line = p.ifLine; line <= p.thenLine; line++) {
+        if (changes.addedLines.has(line) || changes.removedLines.has(line)) {
+          return true;
+        }
+      }
+      return false;
+    })();
     if (!triggered) continue;
 
-    const parts = p.thenTarget.split('#');
-    const targetName = parts[0];
-    const label = parts[1];
-    const targetFile = path.isAbsolute(targetName)
-      ? targetName
-      : path.join(path.dirname(p.file), targetName);
+    const label = p.thenTarget.split('#')[1];
+    const targetFile = p.thenTargetPath;
     const targetChanges = changesMap.get(targetFile);
 
     // Build context for error messages including optional IfChange label
