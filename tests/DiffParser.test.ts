@@ -96,4 +96,15 @@ describe('parseChangedLines spurious header filtering', () => {
     expect(changes.removedLines.has(1)).toBe(true);
     expect(changes.addedLines.has(1)).toBe(true);
   });
+
+  it('handles binary file diffs gracefully', () => {
+    const diff = [
+      'diff --git a/map.proto.bin b/map.proto.bin',
+      'index 84956a042e5d4dc6d16ad75b44494e9e55e0f9c8..713263d7f32b40ef0089b4ff9c97f4b6d2a4ff44 100644',
+      'Binary files a/map.proto.bin and b/map.proto.bin differ'
+    ].join('\n');
+    expect(() => parseChangedLines(diff)).not.toThrow();
+    const result = parseChangedLines(diff);
+    expect(result.size).toBe(0);
+  });
 });

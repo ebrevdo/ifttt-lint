@@ -61,6 +61,10 @@ export function parseChangedLines(diffText: string): Map<string, FileChanges> {
     }
     // Determine file path: prefer 'to' unless it's '/dev/null', else use 'from'
     let raw = file.to && file.to !== '/dev/null' ? file.to : file.from;
+    // Skip binary files or files without valid paths
+    if (!raw) {
+      continue;
+    }
     raw = raw.trim();
     // Strip surrounding quotes if present
     if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
