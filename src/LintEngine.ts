@@ -92,7 +92,7 @@ export async function lintDiff(
   await Promise.all(changedFiles.map(async file => {
     if (verbose) verboseLog(`Processing changed file: ${file}`);
     // Kick off parsing and cache promise for this file
-    const parsePromise = pool.runTask(file) as Promise<LintDirective[]>;
+    const parsePromise = pool.run(file) as Promise<LintDirective[]>;
     directivesCache.set(file, parsePromise);
     const directives = await parsePromise;
     // Validate duplicate directive labels within this file
@@ -211,7 +211,7 @@ export async function lintDiff(
     // Ensure directives parsing promise exists for this file
     let parsePromise = directivesCache.get(file) as Promise<LintDirective[]> | undefined;
     if (!parsePromise) {
-      parsePromise = pool.runTask(file) as Promise<LintDirective[]>;
+      parsePromise = pool.run(file) as Promise<LintDirective[]>;
       directivesCache.set(file, parsePromise);
     }
     let directives: LintDirective[];

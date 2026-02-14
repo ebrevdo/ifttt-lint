@@ -101,7 +101,7 @@ describe('parseCliArgs', () => {
   });
   it('rejects too many args', () => {
     const opts = parseCliArgs(['a', 'b']);
-    expect(opts.error).toBe('Too many arguments');
+    expect(opts.error).toBe('error: too many arguments. Expected 1 argument but got 2.');
   });
   it('parses diffFile as positional', () => {
     const opts = parseCliArgs(['file.diff']);
