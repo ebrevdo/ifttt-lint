@@ -207,7 +207,7 @@ export async function runScan(dir: string, parallelism: number, verbose: boolean
   const tasks = files.map(async file => {
     if (verbose) verboseLog(`Validating file: ${file}`);
     try {
-      const directives = (await pool.runTask(file)) as LintDirective[];
+      const directives = (await pool.run(file)) as LintDirective[];
       errors += validateDirectiveUniqueness(directives, file, msg => console.error(msg));
     } catch (err: unknown) {
       console.error(err instanceof Error ? err.message : err);
