@@ -5,9 +5,10 @@ import * as path from 'path';
 
 // Supported file extensions and which use hash-style comments
 export const langs = [
-  'ts', 'js', 'py', 'bzl', 'java', 'c', 'cpp', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'scala', 'sh'
+  'ts', 'js', 'py', 'bzl', 'java', 'c', 'cpp', 'go', 'rs', 'rb', 'php', 'swift', 'kt', 'scala', 'sh',
+  'toml', 'tsx', 'yml', 'yaml', 'mts', 'cjs'
 ];
-export const hashLangs = new Set(['py', 'bzl', 'rb', 'sh']);
+export const hashLangs = new Set(['py', 'bzl', 'rb', 'sh', 'toml', 'yml', 'yaml']);
 
 /**
  * Generates a temporary directory filled with files containing LINT.IfChange and LINT.ThenChange (self-targeting).

@@ -52,9 +52,9 @@ export async function parseFileDirectives(
   } catch {
     const ext = path.extname(filePath).toLowerCase();
     let fallback: string;
-    if (ext === '.bzl') {
-      // Treat Bazel/Starlark files as Python for comment syntax (#)
-      fallback = filePath.replace(/\.bzl$/i, '.py');
+    if (ext === '.bzl' || ext === '.toml') {
+      // Treat Bazel/Starlark and TOML files as Python for comment syntax (#)
+      fallback = filePath.slice(0, -ext.length) + '.py';
     } else {
       // Default to JavaScript
       fallback = filePath.replace(path.extname(filePath), '.js');

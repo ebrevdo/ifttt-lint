@@ -21,26 +21,41 @@ describe('cross-language lint directives', () => {
     const fileTS = path.join(tmpDir, 'file1.ts');
     const filePY = path.join(tmpDir, 'file2.py');
     const fileBZL = path.join(tmpDir, 'file3.bzl');
+    const fileToml = path.join(tmpDir, 'config.toml');
+    const fileYml = path.join(tmpDir, 'config.yml');
+    const fileTsx = path.join(tmpDir, 'Component.tsx');
     // Create source files with directives
     const tsContent = [
       '// LINT.IfChange',
       '// LINT.ThenChange("file2.py")',
-      '// LINT.ThenChange("file3.bzl")'
+      '// LINT.ThenChange("file3.bzl")',
+      '// LINT.ThenChange("config.toml")',
+      '// LINT.ThenChange("config.yml")',
+      '// LINT.ThenChange("Component.tsx")'
     ].join('\n');
     const pyContent = ['# LINT.Label("pylabel")', '# LINT.EndLabel'].join('\n');
     const bzlContent = ['# dummy bazel file'].join('\n');
+    const tomlContent = ['# LINT.IfChange', '[database]', 'host = "localhost"', '# LINT.ThenChange("file1.ts")'].join('\n');
+    const ymlContent = ['# LINT.IfChange', 'port: 3000', '# LINT.ThenChange("file1.ts")'].join('\n');
+    const tsxContent = ['// LINT.IfChange', 'export const Component = () => <div />;', '// LINT.ThenChange("file1.ts")'].join('\n');
     await fs.writeFile(fileTS, tsContent);
     await fs.writeFile(filePY, pyContent);
     await fs.writeFile(fileBZL, bzlContent);
-    // Build diff: change TS, PY, and BZL
+    await fs.writeFile(fileToml, tomlContent);
+    await fs.writeFile(fileYml, ymlContent);
+    await fs.writeFile(fileTsx, tsxContent);
+    // Build diff: change all files
     const diff = [
       `--- a/${fileTS}`,
       `+++ b/${fileTS}`,
-      '@@ -1,3 +1,3 @@',
+      '@@ -1,6 +1,6 @@',
       '-// LINT.IfChange',
       '+// LINT.IfChange // changed',
       ' // LINT.ThenChange("file2.py")',
       ' // LINT.ThenChange("file3.bzl")',
+      ' // LINT.ThenChange("config.toml")',
+      ' // LINT.ThenChange("config.yml")',
+      ' // LINT.ThenChange("Component.tsx")',
       `--- a/${filePY}`,
       `+++ b/${filePY}`,
       '@@ -1,2 +1,2 @@',
@@ -51,7 +66,29 @@ describe('cross-language lint directives', () => {
       `+++ b/${fileBZL}`,
       '@@ -1,1 +1,1 @@',
       '-# dummy bazel file',
-      '+# dummy bazel file // changed'
+      '+# dummy bazel file // changed',
+      `--- a/${fileToml}`,
+      `+++ b/${fileToml}`,
+      '@@ -1,4 +1,4 @@',
+      ' # LINT.IfChange',
+      '-[database]',
+      '+[database] # updated',
+      ' host = "localhost"',
+      ' # LINT.ThenChange("file1.ts")',
+      `--- a/${fileYml}`,
+      `+++ b/${fileYml}`,
+      '@@ -1,3 +1,3 @@',
+      ' # LINT.IfChange',
+      '-port: 3000',
+      '+port: 8080',
+      ' # LINT.ThenChange("file1.ts")',
+      `--- a/${fileTsx}`,
+      `+++ b/${fileTsx}`,
+      '@@ -1,3 +1,3 @@',
+      ' // LINT.IfChange',
+      '-export const Component = () => <div />;',
+      '+export const Component = () => <span />;',
+      ' // LINT.ThenChange("file1.ts")'
     ].join('\n');
     const result = await lintDiff(diff, 1, true);
     expect(result).toBe(0);
