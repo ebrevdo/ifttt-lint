@@ -19,6 +19,46 @@ const thenChangeRegex = /LINT\.ThenChange\(['"]([^'"]+)['"]\)/;
 const labelRegex = /LINT\.Label\(['"]([^'"]+)['"]\)/;
 const endLabelRegex = /LINT\.EndLabel/;
 
+type CommentsMap = Record<string, { content?: string }>;
+
+// The comment extractor selects syntax by filename/extension. Rather than rely on
+// every extension being recognized, we normalize unrecognized files to a small set
+// of representative filenames whose comment syntax is known to be supported:
+//   x.py   -> hash comments (#)
+//   x.js   -> slash comments (//, /* */)
+//   x.html -> HTML comments (<!-- -->)
+const REP_HASH = 'x.py';
+const REP_SLASH = 'x.js';
+const REP_HTML = 'x.html';
+
+/**
+ * Maps a file path to a representative filename with a known comment syntax,
+ * used when the extractor cannot recognize the file directly. Returns null when
+ * we have no sensible default.
+ */
+function representativeFilename(filePath: string): string | null {
+  const base = path.basename(filePath);
+  const ext = path.extname(filePath).toLowerCase();
+  // Makefile family and other hash-comment files
+  if (/^(gnu)?makefile$/i.test(base) || ext === '.mk' || ext === '.bzl') {
+    return REP_HASH;
+  }
+  // Default to slash-comment syntax (preserves prior behavior for unknown types)
+  return REP_SLASH;
+}
+
+/**
+ * Runs the comment extractor for the given representative filename, returning
+ * null instead of throwing when the content has no extractable comments.
+ */
+function tryExtract(content: string, filename: string): CommentsMap | null {
+  try {
+    return extractComments(content, { filename }) as CommentsMap;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Parses lint directives from comments in the specified file.
  * Uses the extract-comments library to find comment blocks and line comments,
@@ -43,29 +83,36 @@ export async function parseFileDirectives(
     // Propagate other errors (e.g., permission issues)
     throw err;
   }
-  // Use multi-language comment extractor to find all comments in source
-  // Pass filename so extractor can choose comment syntax by extension
-  let commentsMap: Record<string, { content?: string }>;
-  // Try extracting comments by file extension; if unsupported, fall back or warn
-  try {
-    commentsMap = extractComments(content, { filename: filePath });
-  } catch {
-    const ext = path.extname(filePath).toLowerCase();
-    let fallback: string;
-    if (ext === '.bzl') {
-      // Treat Bazel/Starlark files as Python for comment syntax (#)
-      fallback = filePath.replace(/\.bzl$/i, '.py');
-    } else {
-      // Default to JavaScript
-      fallback = filePath.replace(path.extname(filePath), '.js');
-    }
-    try {
-      commentsMap = extractComments(content, { filename: fallback });
-    } catch {
-      // Could not extract comments (e.g., JSON or unsupported extensions): ignore silently
-      return [];
-    }
+  const ext = path.extname(filePath).toLowerCase();
+  // Markdown uses HTML comment syntax (<!-- LINT.IfChange -->), which the
+  // extractor doesn't recognize from the .md extension, so normalize it.
+  if (ext === '.md' || ext === '.markdown') {
+    const mdMap = tryExtract(content, REP_HTML);
+    return mdMap ? directivesFromCommentsMap(mdMap, filePath) : [];
   }
+
+  // Use multi-language comment extractor to find all comments in source.
+  // Try the path as-is first (recognizes Makefile, *.py, *.html, etc.); if the
+  // extractor can't determine the syntax, retry with a representative filename.
+  let commentsMap = tryExtract(content, filePath);
+  if (commentsMap === null) {
+    const rep = representativeFilename(filePath);
+    commentsMap = rep ? tryExtract(content, rep) : null;
+  }
+  if (commentsMap === null) {
+    // Could not extract comments (e.g., JSON or unsupported extensions): ignore silently
+    return [];
+  }
+  return directivesFromCommentsMap(commentsMap, filePath);
+}
+
+/**
+ * Walks an extracted comment map and returns the LINT directives within it.
+ */
+function directivesFromCommentsMap(
+  commentsMap: CommentsMap,
+  filePath: string
+): LintDirective[] {
   // commentsMap maps starting line numbers (as strings) to comment objects
   const directives: LintDirective[] = [];
   for (const [beginStr, comment] of Object.entries(commentsMap)) {

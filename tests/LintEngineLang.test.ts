@@ -81,4 +81,63 @@ describe('cross-language lint directives', () => {
     const code = await lintDiff(diff, 1, true);
     expect(code).toBe(1);
   });
+
+  test('passes when a Markdown IfChange and its Makefile target both change', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lintlang-'));
+    const fileMD = path.join(tmpDir, 'doc.md');
+    const fileMK = path.join(tmpDir, 'Makefile');
+    const mdContent = [
+      '<!-- LINT.IfChange -->',
+      'Docs for the build var.',
+      '<!-- LINT.ThenChange("Makefile") -->'
+    ].join('\n');
+    const mkContent = ['# LINT.Label("var")', 'SOMEVAR = 1', '# LINT.EndLabel'].join('\n');
+    await fs.writeFile(fileMD, mdContent);
+    await fs.writeFile(fileMK, mkContent);
+    // Change both the markdown doc and the Makefile.
+    const diff = [
+      `--- a/${fileMD}`,
+      `+++ b/${fileMD}`,
+      '@@ -1,3 +1,3 @@',
+      '-<!-- LINT.IfChange -->',
+      '+<!-- LINT.IfChange --> <!-- changed -->',
+      ' Docs for the build var.',
+      ' <!-- LINT.ThenChange("Makefile") -->',
+      `--- a/${fileMK}`,
+      `+++ b/${fileMK}`,
+      '@@ -1,3 +1,3 @@',
+      ' # LINT.Label("var")',
+      '-SOMEVAR = 1',
+      '+SOMEVAR = 2',
+      ' # LINT.EndLabel'
+    ].join('\n');
+    const result = await lintDiff(diff, 1, true);
+    expect(result).toBe(0);
+  });
+
+  test('fails when a Makefile IfChange target Markdown file is not changed', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'lintlang-'));
+    const fileMK = path.join(tmpDir, 'Makefile');
+    const fileMD = path.join(tmpDir, 'README.md');
+    const mkContent = [
+      '# LINT.IfChange',
+      'SOMEVAR = 1',
+      '# LINT.ThenChange("README.md")'
+    ].join('\n');
+    const mdContent = ['# Project', '', 'Docs.'].join('\n');
+    await fs.writeFile(fileMK, mkContent);
+    await fs.writeFile(fileMD, mdContent);
+    // Change the Makefile but not the markdown target.
+    const diff = [
+      `--- a/${fileMK}`,
+      `+++ b/${fileMK}`,
+      '@@ -1,3 +1,3 @@',
+      ' # LINT.IfChange',
+      '-SOMEVAR = 1',
+      '+SOMEVAR = 2',
+      ' # LINT.ThenChange("README.md")'
+    ].join('\n');
+    const code = await lintDiff(diff, 1, true);
+    expect(code).toBe(1);
+  });
 });
